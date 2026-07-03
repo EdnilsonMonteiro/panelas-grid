@@ -1,0 +1,5 @@
+layout_*
+
+# VS Code
+.vscode/*
+.env
