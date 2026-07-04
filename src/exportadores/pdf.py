@@ -17,12 +17,12 @@ class ExportadorPDF:
 
         for idx, modulo in enumerate(pedido_cliente.modulos):
             ax = axes[idx, 0]
-            ax.set_xlim(0, modulo.L)
-            ax.set_ylim(0, modulo.P)
+            ax.set_xlim(0, modulo.engine.L)
+            ax.set_ylim(0, modulo.engine.P)
             ax.invert_yaxis()
             ax.set_aspect("equal")
 
-            for item in modulo.itens:
+            for item in modulo.engine.itens:
                 x, y, w, h = item["x"], item["y"], item["w"], item["h"]
 
                 if item["formato"] == "circulo":
@@ -79,7 +79,7 @@ class ExportadorPDF:
                     )
 
             ax.set_title(
-                f"Módulo {idx + 1}: {modulo.tipo_rampa.upper()} - {modulo.L}cm x {modulo.P}cm",
+                f"Módulo {idx + 1}: {modulo.tipo_rampa.upper()} - {modulo.engine.L}cm x {modulo.engine.P}cm",
                 fontsize=14,
                 pad=10,
             )

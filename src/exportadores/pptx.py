@@ -68,8 +68,8 @@ class ExportadorPPTX:
 
         for modulo in pedido.modulos:
             # O SEGREDO ESTÁ AQUI: Envolver a matemática do tamanho final em Cm()
-            largura_real = Cm(modulo.L * ESCALA)
-            altura_real = Cm(modulo.P * ESCALA)
+            largura_real = Cm(modulo.engine.L * ESCALA)
+            altura_real = Cm(modulo.engine.P * ESCALA)
 
             # Centralização dinâmica baseada na escala do slide inteiro
             offset_x = (prs.slide_width - largura_real) / 2
@@ -92,7 +92,7 @@ class ExportadorPPTX:
                 fundo.fill.fore_color.rgb = RGBColor(210, 210, 210)
 
             # --- 4. ALOCAÇÃO DAS PANELAS ---
-            for item in modulo.itens:
+            for item in modulo.engine.itens:
                 # O SEGREDO REPETIDO AQUI: Cm() em tudo que usa a Escala
                 x_pos = offset_x + Cm(item["x"] * ESCALA)
                 y_pos = offset_y + Cm(item["y"] * ESCALA)
@@ -165,7 +165,7 @@ class ExportadorPPTX:
                 offset_x, target_y + Cm(0.6), largura_real, Cm(1.5)
             )
             p_larg = tx_largura.text_frame.paragraphs[0]
-            p_larg.text = f"{modulo.L}cm"
+            p_larg.text = f"{modulo.engine.L}cm"
             p_larg.alignment = PP_ALIGN.CENTER
             p_larg.font.bold = True
             p_larg.font.size = Pt(16)  # Ajustado para visualização harmônica
@@ -195,7 +195,7 @@ class ExportadorPPTX:
             tf_prof.margin_right = Cm(0)
 
             p_prof = tx_prof.text_frame.paragraphs[0]
-            p_prof.text = f"{modulo.P}cm"
+            p_prof.text = f"{modulo.engine.P}cm"
             p_prof.alignment = PP_ALIGN.LEFT
             p_prof.font.bold = True
             p_prof.font.size = Pt(16)  # Ajustado para visualização harmônica
