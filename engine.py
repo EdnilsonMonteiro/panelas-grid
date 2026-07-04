@@ -1,3 +1,6 @@
+# engine.py
+
+
 class LayoutEngine:
     def __init__(self, comprimento_cm, profundidade_cm, espacamento_cm=0.5):
         self.L = comprimento_cm
@@ -27,10 +30,86 @@ class LayoutEngine:
             return 0.0
         return max(i["x"] + i["w"] for i in self.itens)
 
+    def buscar_melhor_combinacao_vertical(self, catalogo, altura_maxima):
+        """
+        Busca combinações verticais maximizando a altura usada.
+        Em caso de somas iguais ou muito próximas, prioriza peças maiores (como 32+13 em vez de 21+21).
+        """
+        itens_por_largura = {}
+        for item in catalogo:
+            w, h = item["w"], item["h"]
+            if w not in itens_por_largura:
+                itens_por_largura[w] = []
+            itens_por_largura[w].append(item)
+            if item.get("rot", False) and w != h:
+                if h not in itens_por_largura:
+                    itens_por_largura[h] = []
+                itens_por_largura[h].append(
+                    {"nome": item["nome"] + " (R)", "w": h, "h": w}
+                )
+
+        melhores_torres = []
+
+        for lw, itens_disponiveis in itens_por_largura.items():
+            # Ordena os itens disponíveis da maior altura para a menor
+            # Isso força o algoritmo a testar peças grandes (ex: 32cm) antes das menores (ex: 21cm)
+            itens_disponiveis = sorted(
+                itens_disponiveis, key=lambda x: x["h"], reverse=True
+            )
+
+            melhor_soma = 0
+            melhor_combinacao = []
+            maior_peca_da_comb = 0
+
+            def encontrar_comb(index, soma_atual, comb_atual):
+                nonlocal melhor_soma, melhor_combinacao, maior_peca_da_comb
+
+                qtd_gaps = len(comb_atual) - 1
+                custo_espaco = max(0, qtd_gaps * self.espaco)
+                total_com_espaco = soma_atual + custo_espaco
+
+                if total_com_espaco > altura_maxima:
+                    return
+
+                # CRITÉRIO DE ESCOLHA:
+                # 1. Se a nova soma for estritamente maior, substitui.
+                # 2. Se a soma for igual (empate técnico), mas essa combinação usa uma peça individual MAIOR, substitui!
+                peca_max_atual = max([x["h"] for x in comb_atual]) if comb_atual else 0
+
+                if (total_com_espaco > melhor_soma) or (
+                    abs(total_com_espaco - melhor_soma) < 0.1
+                    and peca_max_atual > maior_peca_da_comb
+                ):
+                    melhor_soma = total_com_espaco
+                    melhor_combinacao = list(comb_atual)
+                    maior_peca_da_comb = peca_max_atual
+
+                for i in range(index, len(itens_disponiveis)):
+                    item = itens_disponiveis[i]
+                    comb_atual.append(item)
+                    encontrar_comb(i, soma_atual + item["h"], comb_atual)
+                    comb_atual.pop()
+
+            encontrar_comb(0, 0, [])
+            if melhor_combinacao:
+                melhores_torres.append(
+                    {
+                        "largura": lw,
+                        "itens": melhor_combinacao,
+                        "aproveitamento": melhor_soma,
+                    }
+                )
+
+        # Ordena dando prioridade absoluta para quem ocupa mais espaço vertical
+        melhores_torres = sorted(
+            melhores_torres, key=lambda x: x["aproveitamento"], reverse=True
+        )
+        return melhores_torres
+
     def alocar_na_secao(
         self, nome, w, h, x_min, x_max, formato="retangulo", rotacionar=False
     ):
-        """Heurística Bottom-Left dentro de uma zona específica (x_min até x_max)."""
+        """Heurística Bottom-Left dentro de uma zona específica."""
         x_max = min(x_max, self.L)
 
         passos_x = [x_min] + [
@@ -60,7 +139,7 @@ class LayoutEngine:
                     )
                     return True
 
-                # 2. Tenta rotacionada (se permitido)
+                # 2. Tenta rotacionada (se permitido pelo catálogo)
                 if rotacionar and formato == "retangulo":
                     if px + h <= x_max and self.cabe(px, py, h, w):
                         self.itens.append(
@@ -76,114 +155,90 @@ class LayoutEngine:
                         return True
         return False
 
-    def preencher_secao_otimizada(self, catalogo, x_min, x_max, nome_secao):
+    def alocar_torre_na_secao(self, torre, x_min, x_max):
         """
-        Preenche a seção testando combinações verticais (colunas) para maximizar
-        o uso da profundidade útil (P), evitando buracos causados por itens gulosos.
+        Tenta alocar uma estrutura de torre vertical completa em um passo X estável.
+        Garante que todos os elementos da combinação entrem juntos.
         """
-        print(f"--- Iniciando preenchimento otimizado: {nome_secao} ---")
+        x_max = min(x_max, self.L)
+        w_torre = torre["largura"]
 
-        # Agrupa o catálogo por larguras idênticas para formar colunas uniformes
-        # Se um item puder rotacionar, criamos uma variante dele com W e H invertidos
-        itens_expandidos = []
-        for item in catalogo:
-            itens_expandidos.append(
-                {"nome": item["nome"], "w": item["w"], "h": item["h"]}
-            )
-            if item.get("rot", False) and item["w"] != item["h"]:
-                itens_expandidos.append(
-                    {"nome": item["nome"] + " (R)", "w": item["h"], "h": item["w"]}
-                )
+        passos_x = [x_min] + [
+            i["x"] + i["w"] + self.espaco for i in self.itens if i["x"] >= x_min
+        ]
+        passos_y = [0.0] + [i["y"] + i["h"] + self.espaco for i in self.itens]
 
-        larguras_unicas = sorted(list(set([i["w"] for i in itens_expandidos])))
+        passos_x = sorted(list(set([round(p, 2) for p in passos_x])))
+        passos_y = sorted(list(set([round(p, 2) for p in passos_y])))
 
-        x_atual = x_min
-        while x_atual <= x_max:
-            melhor_combinacao = []
-            melhor_aproveitamento = -1
-            melhor_largura = 0
+        for px in passos_x:
+            if px + w_torre > x_max:
+                continue
 
-            # Testamos uma coluna para cada largura disponível no catálogo
-            for lw in larguras_unicas:
-                if x_atual + lw > x_max:
-                    continue
+            for py in passos_y:
+                # Verifica se a torre inteira cabe verticalmente a partir deste ponto Y
+                y_atual = py
+                torre_cabe = True
+                itens_temporarios = []
 
-                # Filtra itens que possuem exatamente esta largura de coluna
-                itens_da_largura = [i for i in itens_expandidos if i["w"] == lw]
-                if not itens_da_largura:
-                    continue
-
-                # Encontra recursivamente a melhor combinação vertical para esta largura lw
-                comb = self._buscar_melhor_coluna(itens_da_largura, self.P)
-
-                if comb:
-                    # Altura total ocupada por essa combinação (somando itens + espaços entre eles)
-                    altura_total = (
-                        sum(i["h"] for i in comb) + (len(comb) - 1) * self.espaco
-                    )
-
-                    # Queremos a combinação que chegue o mais próximo possível de self.P
-                    if altura_total > melhor_aproveitamento:
-                        melhor_aproveitamento = float(altura_total)
-                        melhor_combinacao = comb
-                        melhor_largura = lw
-
-            # Se encontramos uma combinação viável para o X atual, nós a alocamos em torre (eixo Y)
-            if melhor_combinacao and melhor_largura > 0:
-                y_atual = 0.0
-                pode_alocar_bloco = True
-
-                # Validação preventiva de segurança para o bloco inteiro
-                for item in melhor_combinacao:
-                    if not self.cabe(x_atual, y_atual, melhor_largura, item["h"]):
-                        pode_alocar_bloco = False
-                        break
-                    y_atual += item["h"] + self.espaco
-
-                if pode_alocar_bloco:
-                    y_atual = 0.0
-                    for item in melhor_combinacao:
-                        self.itens.append(
+                for item in torre["itens"]:
+                    if self.cabe(px, y_atual, w_torre, item["h"]):
+                        itens_temporarios.append(
                             {
                                 "nome": item["nome"],
-                                "x": round(x_atual, 2),
-                                "y": round(y_atual, 2),
-                                "w": melhor_largura,
+                                "x": px,
+                                "y": y_atual,
+                                "w": w_torre,
                                 "h": item["h"],
                                 "formato": "retangulo",
                             }
                         )
                         y_atual += item["h"] + self.espaco
+                    else:
+                        torre_cabe = False
+                        break
 
-                    # Avança o X para o fim desta coluna adicionada mais o espaçamento
-                    x_atual = round(x_atual + melhor_largura + self.espaco, 2)
-                    continue
+                if torre_cabe:
+                    # Se o conjunto completo passou no teste, consolida no balcão
+                    self.itens.extend(itens_temporarios)
+                    return True
+        return False
 
-            # Se nenhuma combinação serviu para este X, avança linearmente para tentar o próximo ponto
-            x_atual = round(x_atual + 1.0, 2)
+    def preencher_secao_com_torres(self, torres_prioridade, x_min, x_max, nome_secao):
+        """Preenche a seção testando as melhores configurações de torres verticais inteiras."""
+        print(f"--- Iniciando preenchimento com Torres: {nome_secao} ---")
+        continuar = True
+        while continuar:
+            adicionou = False
+            for torre in torres_prioridade:
+                if self.alocar_na_secao_torre_total(torre, x_min, x_max):
+                    adicionou = True
+                    break  # Reinicia a varredura para garantir prioridade máxima de aproveitamento
+            if not adicionou:
+                continuar = False
 
-    def _buscar_melhor_coluna(self, itens_disponiveis, altura_maxima):
-        """Algoritmo de busca exaustiva para achar o melhor arranjo vertical de itens."""
-        melhor_arranjo = []
-        maior_altura = -1
+    def alocar_na_secao_torre_total(self, torre, x_min, x_max):
+        # Cria um alias amigável para o preenchedor de bloco
+        return self.alocar_torre_na_secao(torre, x_min, x_max)
 
-        def resolver(arranjo_atual, altura_atual):
-            nonlocal melhor_arranjo, maior_altura
-
-            if altura_atual > maior_altura:
-                maior_altura = altura_atual
-                melhor_arranjo = list(arranjo_atual)
-
-            for item in itens_disponiveis:
-                # Se já houver itens, soma o espaçamento necessário entre eles
-                custo_espaco = self.espaco if arranjo_atual else 0.0
-                nova_altura = altura_atual + custo_espaco + item["h"]
-
-                # Regra estrita: não pode ultrapassar o limite físico da rampa (P)
-                if round(nova_altura, 2) <= round(altura_maxima, 2):
-                    arranjo_atual.append(item)
-                    resolver(arranjo_atual, nova_altura)
-                    arranjo_atual.pop()
-
-        resolver([], 0.0)
-        return melhor_arranjo
+    def preencher_secao(self, catalogo_prioridade, x_min, x_max, nome_secao):
+        """Tenta alocar itens iterativamente até não sobrar espaço na zona delimitada."""
+        print(f"--- Iniciando preenchimento: {nome_secao} ---")
+        continuar = True
+        while continuar:
+            adicionou = False
+            for item in catalogo_prioridade:
+                sucesso = self.alocar_na_secao(
+                    item["nome"],
+                    w=item["w"],
+                    h=item["h"],
+                    x_min=x_min,
+                    x_max=x_max,
+                    formato="retangulo",
+                    rotacionar=item.get("rot", False),
+                )
+                if sucesso:
+                    adicionou = True
+                    break
+            if not adicionou:
+                continuar = False

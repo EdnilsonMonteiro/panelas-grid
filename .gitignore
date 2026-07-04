@@ -1,5 +1,6 @@
 layout_*
-
+.~lock*
+__pycache__
 # VS Code
 .vscode/*
 .env
