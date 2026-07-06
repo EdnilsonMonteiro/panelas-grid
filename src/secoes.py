@@ -22,8 +22,24 @@ class SecaoTorresGulosas(Secao):
     e então tenta a próxima maior para preencher o resto da coluna.
     """
 
-    def __init__(self, nome, pct_largura_alvo=0.7):
+    UI_SCHEMA = {
+        "tipo": "SecaoTorresGulosas",
+        "nome_amigavel": "Preenchimento Guloso (Rápido)",
+        "descricao": "Preenche o espaço tentando alocar as maiores travessas primeiro.",
+        "campos": [
+            {"nome": "catalogo", "tipo": "catalogo", "label": "Catálogo de Travessas"},
+            {
+                "nome": "pct_largura_alvo",
+                "tipo": "float",
+                "label": "% do Espaço Restante",
+                "default": 0.7,
+            },
+        ],
+    }
+
+    def __init__(self, nome, pct_largura_alvo=0.7, catalogo=None, **kwargs):
         super().__init__(nome, pct_largura_alvo)
+        self.catalogo_especifico = catalogo
 
     def buscar_torres_gulosas(self, catalogo, altura_maxima, espaco):
         catalogo_isolado = copy.deepcopy(catalogo)
@@ -82,8 +98,12 @@ class SecaoTorresGulosas(Secao):
         return torres_gulosas
 
     def executar_alocacao(self, modulo, x_min, x_max, catalogo):
+        cat_para_usar = (
+            self.catalogo_especifico if self.catalogo_especifico else catalogo
+        )
+
         torres = self.buscar_torres_gulosas(
-            catalogo, altura_maxima=modulo.engine.P, espaco=modulo.engine.espaco
+            cat_para_usar, altura_maxima=modulo.engine.P, espaco=modulo.engine.espaco
         )
 
         modulo.engine.preencher_secao_com_torres(
@@ -92,9 +112,24 @@ class SecaoTorresGulosas(Secao):
 
 
 class SecaoMioloTorres(Secao):
-    """Encapsula a otimização vertical pura de torres de cubas (antigo Passo 3)."""
+    """Encapsula a otimização vertical pura de torres de cubas"""
 
-    def __init__(self, nome, pct_largura_alvo=0.7):
+    UI_SCHEMA = {
+        "tipo": "SecaoMioloTorres",
+        "nome_amigavel": "Otimização de Torres (Miolo)",
+        "descricao": "Calcula combinações verticais complexas para maximizar matematicamente a altura utilizada do balcão.",
+        "campos": [
+            {"nome": "catalogo", "tipo": "catalogo", "label": "Catálogo de Cubas"},
+            {
+                "nome": "pct_largura_alvo",
+                "tipo": "float",
+                "label": "% do Espaço Restante",
+                "default": 0.7,
+            },
+        ],
+    }
+
+    def __init__(self, nome, pct_largura_alvo=0.7, **kwargs):
         super().__init__(nome, pct_largura_alvo)
 
     def buscar_melhor_combinacao_vertical(self, catalogo, altura_maxima, espaco):
@@ -181,10 +216,38 @@ class SecaoMioloTorres(Secao):
 class SecaoPanelasRedondasComGaps(SecaoMioloTorres):
     """Encapsula as panelas redondas e o preenchimento de gaps abaixo delas."""
 
-    def __init__(self, nome, qtd_panelas, catalogo_gaps):
-        super().__init__(nome, 0.75)
+    UI_SCHEMA = {
+        "tipo": "SecaoPanelasRedondasComGaps",
+        "nome_amigavel": "Panelas Redondas + Gaps",
+        "descricao": "Aloca panelas redondas e preenche o espaço inferior com torres.",
+        "campos": [
+            {
+                "nome": "catalogo_gaps",
+                "tipo": "catalogo",
+                "label": "Catálogo para Gaps",
+            },
+            {
+                "nome": "qtd_panelas",
+                "tipo": "int",
+                "label": "Quantidade de Panelas",
+                "default": 6,
+            },
+            {
+                "nome": "pct_largura_alvo",
+                "tipo": "float",
+                "label": "% do Espaço Restante",
+                "default": 0.3,
+            },
+        ],
+    }
+
+    def __init__(
+        self, nome, qtd_panelas=4, catalogo_gaps=None, pct_largura_alvo=0.8, **kwargs
+    ):
         self.qtd_panelas = qtd_panelas
         self.catalogo_gaps = catalogo_gaps
+
+        super().__init__(nome=nome, pct_largura_alvo=pct_largura_alvo, **kwargs)
 
     def executar_alocacao(self, modulo, x_min, x_max, catalogo):
         self.alocar_panelas_redondas_inteligente(
@@ -283,13 +346,37 @@ class SecaoPanelasRedondasComGaps(SecaoMioloTorres):
 
 
 class SecaoItensFixos(Secao):
-    """Encapsula o preenchimento de itens específicos/saladas (antigo Passo 4)."""
+    """Encapsula o preenchimento de itens específicos/saladas"""
 
-    def __init__(self, nome, catalogo_especifico):
-        super().__init__(nome, pct_largura_alvo=1.0)
+    UI_SCHEMA = {
+        "tipo": "SecaoItensFixos",
+        "nome_amigavel": "Itens Fixos / Saladas",
+        "descricao": "Aloca uma lista predefinida de itens específicos (como saladas ou travessas dedicadas) sem otimização combinatória.",
+        "campos": [
+            {
+                "nome": "catalogo_especifico",
+                "tipo": "catalogo",
+                "label": "Catálogo de Itens Fixos",
+            },
+            {
+                "nome": "pct_largura_alvo",
+                "tipo": "float",
+                "label": "% do Espaço Restante",
+                "default": 1.0,
+            },
+        ],
+    }
+
+    def __init__(self, nome, catalogo_especifico=None, pct_largura_alvo=1.0, **kwargs):
         self.catalogo_especifico = catalogo_especifico
 
+        super().__init__(nome=nome, pct_largura_alvo=pct_largura_alvo)
+
     def executar_alocacao(self, modulo, x_min, x_max, catalogo):
+        cat_para_usar = (
+            self.catalogo_especifico if self.catalogo_especifico else catalogo
+        )
+
         modulo.engine.preencher_secao(
-            self.catalogo_especifico, x_min=x_min, x_max=x_max, nome_secao=self.nome
+            cat_para_usar, x_min=x_min, x_max=x_max, nome_secao=self.nome
         )
