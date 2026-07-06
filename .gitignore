@@ -1,4 +1,7 @@
 layout_*
+layouts_*
+resultado_*
+catalogos/*
 .~lock*
 __pycache__
 # VS Code
