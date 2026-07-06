@@ -17,8 +17,10 @@ class ExportadorPPTX:
         slide = prs.slides.add_slide(prs.slide_layouts[6])
 
         # --- 1. CABEÇALHO (Logo, Textos e Linha) ---
-        if os.path.exists("assets/logo.png"):
-            slide.shapes.add_picture("assets/logo.png", Cm(1), Cm(0.5), height=Cm(2.5))
+        if os.path.exists("../assets/logo.png"):
+            slide.shapes.add_picture(
+                "../assets/logo.png", Cm(1), Cm(0.5), height=Cm(2.5)
+            )
 
         # Texto descritivo abaixo da logo
         tx_desc = slide.shapes.add_textbox(Cm(0.8), Cm(3), Cm(15), Cm(1.5))
@@ -76,9 +78,9 @@ class ExportadorPPTX:
             offset_y = Cm(7)
 
             # --- 3. DESENHO DO BALCÃO ---
-            if os.path.exists("assets/fundo_perfurado.png"):
+            if os.path.exists("../assets/fundo_perfurado.png"):
                 slide.shapes.add_picture(
-                    "assets/fundo_perfurado.png",
+                    "../assets/fundo_perfurado.png",
                     offset_x,
                     offset_y,
                     largura_real,
@@ -101,9 +103,9 @@ class ExportadorPPTX:
 
                 is_circulo = item.get("formato") == "circulo"
                 img_path = (
-                    "assets/panela_redonda.png"
+                    "../assets/panela_redonda.png"
                     if is_circulo
-                    else "assets/panela_retangular.png"
+                    else "../assets/panela_retangular.png"
                 )
 
                 if os.path.exists(img_path):

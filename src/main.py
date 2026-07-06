@@ -1,19 +1,19 @@
 from exportadores.pdf import ExportadorPDF
 from exportadores.pptx import ExportadorPPTX
 from modelos import PedidoCliente
-from secoes import SecaoItensFixos, SecaoMioloTorres, SecaoPanelasRedondasComGaps
+from secoes import SecaoItensFixos, SecaoPanelasRedondasComGaps, SecaoTorresGulosas
 
 print("\n=== PROCESSANDO PEDIDO - ENGENHARIA DE LAYOUT POR SEÇÕES ===")
 pedido_combo = PedidoCliente("Combo Rampa Otimizada")
 
 cat_completo = [
     {"nome": "Cuba G", "w": 21, "h": 53, "rot": True},
+    {"nome": "Cuba P", "w": 21, "h": 44, "rot": True},
     {"nome": "Cuba M", "w": 21, "h": 32, "rot": True},
     {"nome": "Cuba Meio", "w": 21, "h": 21},
     {"nome": "Cuba P", "w": 21, "h": 13, "rot": True},
     {"nome": "Cuba Slim", "w": 17, "h": 44, "rot": True},
-    {"nome": "Cuba Mini", "w": 13, "h": 42, "rot": True},
-    {"nome": "Cuba Quadrada", "w": 32, "h": 45, "rot": True},
+    {"nome": "Cuba Mini", "w": 13, "h": 32, "rot": True},
 ]
 
 cat_s4 = [
@@ -29,9 +29,9 @@ balcao_grande = pedido_combo.adicionar_modulo(
 
 balcao_grande.adicionar_secao(
     SecaoPanelasRedondasComGaps(
-        nome="Seção 1: Redondas", qtd_panelas=6, catalogo_gaps=cat_completo
+        nome="Seção 1: Redondas", qtd_panelas=4, catalogo_gaps=cat_completo
     )
-).adicionar_secao(SecaoMioloTorres(nome="Seções 2+3: Miolo Central")).adicionar_secao(
+).adicionar_secao(SecaoTorresGulosas(nome="Seções 2+3: Miolo Central")).adicionar_secao(
     SecaoItensFixos(nome="Seção 4: Final Especial", catalogo_especifico=cat_s4)
 )
 

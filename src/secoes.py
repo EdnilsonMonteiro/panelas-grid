@@ -15,6 +15,82 @@ class Secao(ABC):
         pass
 
 
+class SecaoTorresGulosas(Secao):
+    """
+    Preenche a seção criando torres verticais de forma gulosa (greedy).
+    Pega a maior travessa daquela largura, empilha até não caber mais,
+    e então tenta a próxima maior para preencher o resto da coluna.
+    """
+
+    def __init__(self, nome, pct_largura_alvo=0.7):
+        super().__init__(nome, pct_largura_alvo)
+
+    def buscar_torres_gulosas(self, catalogo, altura_maxima, espaco):
+        catalogo_isolado = copy.deepcopy(catalogo)
+        itens_por_largura = {}
+
+        for item in catalogo_isolado:
+            w, h = item["w"], item["h"]
+            if w not in itens_por_largura:
+                itens_por_largura[w] = []
+            itens_por_largura[w].append(item)
+
+            if item.get("rot", False) and w != h:
+                if h not in itens_por_largura:
+                    itens_por_largura[h] = []
+                itens_por_largura[h].append(
+                    {"nome": item["nome"] + " (R)", "w": h, "h": w}
+                )
+
+        torres_gulosas = []
+
+        for lw, itens_disponiveis in itens_por_largura.items():
+            itens_disponiveis = sorted(
+                itens_disponiveis, key=lambda x: x["h"], reverse=True
+            )
+
+            itens_da_torre = []
+            altura_ocupada = 0.0
+
+            # LÓGICA GULOSA:
+            # Tenta a maior peça. Se couber, repete. Se não, vai pra próxima.
+            for item in itens_disponiveis:
+                while True:
+                    espaco_extra = espaco if itens_da_torre else 0
+                    altura_projetada = altura_ocupada + espaco_extra + item["h"]
+
+                    if altura_projetada <= altura_maxima:
+                        itens_da_torre.append(item)
+                        altura_ocupada = altura_projetada
+                    else:
+                        break
+
+            if itens_da_torre:
+                torres_gulosas.append(
+                    {
+                        "largura": lw,
+                        "itens": itens_da_torre,
+                        "aproveitamento": altura_ocupada,
+                    }
+                )
+
+        torres_gulosas = sorted(
+            torres_gulosas, key=lambda x: x["aproveitamento"], reverse=True
+        )
+
+        print(f"Torres gulosas calculadas para a seção: {self.nome}")
+        return torres_gulosas
+
+    def executar_alocacao(self, modulo, x_min, x_max, catalogo):
+        torres = self.buscar_torres_gulosas(
+            catalogo, altura_maxima=modulo.engine.P, espaco=modulo.engine.espaco
+        )
+
+        modulo.engine.preencher_secao_com_torres(
+            torres, x_min=x_min, x_max=x_max, nome_secao=self.nome
+        )
+
+
 class SecaoMioloTorres(Secao):
     """Encapsula a otimização vertical pura de torres de cubas (antigo Passo 3)."""
 
