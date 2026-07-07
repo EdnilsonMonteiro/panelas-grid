@@ -1,8 +1,10 @@
+import io
 import json
+import logging
 import os
 import zipfile
 
-from flask import Flask, jsonify, request, send_file
+from flask import Flask, after_this_request, jsonify, request, send_file
 from flask_cors import CORS
 
 from exportadores.pdf import ExportadorPDF
@@ -24,6 +26,8 @@ REGISTRO_SECOES = {
     "SecaoMioloTorres": SecaoMioloTorres,
     "SecaoItensFixos": SecaoItensFixos,
 }
+
+DIRETORIO_ATUAL = os.path.dirname(os.path.abspath(__file__))
 
 
 def carregar_catalogo_por_nome(nome_catalogo: str) -> list:
@@ -114,6 +118,7 @@ def obter_schemas_secoes():
 @app.route("/api/processar", methods=["POST"])
 def processar_pipeline():
     """Recebe a estrutura de montagem e retorna o arquivo de resposta gerado."""
+    arquivos_locais_para_limpar = []
     try:
         dados_recebidos = request.json
         if not dados_recebidos:
@@ -127,27 +132,69 @@ def processar_pipeline():
 
         pedido_processado = construir_pipeline_desde_json(dados_recebidos, pedido)
 
-        caminho_pdf = f"layouts_{nome_cliente_ui}.pdf"
-        caminho_pptx = f"layouts_{nome_cliente_ui}.pptx"
-        caminho_zip = f"layouts_{nome_cliente_ui}.zip"
+        nome_slug = nome_cliente_ui.replace(" ", "_").lower()
+
+        import unicodedata
+
+        nome_slug = "".join(
+            c
+            for c in unicodedata.normalize("NFD", nome_slug)
+            if unicodedata.category(c) != "Mn"
+        )
+
+        caminho_pdf = os.path.join(DIRETORIO_ATUAL, f"layout_{nome_slug}.pdf")
+        caminho_pptx = os.path.join(DIRETORIO_ATUAL, f"layout_{nome_slug}.pptx")
+
+        arquivos_locais_para_limpar.extend([caminho_pdf, caminho_pptx])
 
         ExportadorPDF.gerar_layout(pedido_processado, caminho_pdf)
         ExportadorPPTX.gerar_layout(pedido_processado, caminho_pptx)
 
-        nome_slug = nome_cliente_ui.replace(" ", "_").lower()
+        memoria_zip = io.BytesIO()
 
-        with zipfile.ZipFile(caminho_zip, "w", zipfile.ZIP_DEFLATED) as zipf:
-            zipf.write(caminho_pdf, arcname=f"layout_{nome_slug}.pdf")
-            zipf.write(caminho_pptx, arcname=f"layout_{nome_slug}.pptx")
+        with zipfile.ZipFile(memoria_zip, "w", zipfile.ZIP_DEFLATED) as zipf:
+            if os.path.exists(caminho_pdf):
+                zipf.write(caminho_pdf, arcname=f"layout_{nome_slug}.pdf")
+            if os.path.exists(caminho_pptx):
+                zipf.write(caminho_pptx, arcname=f"layout_{nome_slug}.pptx")
+
+        memoria_zip.seek(0)
+
+        for arquivo in arquivos_locais_para_limpar:
+            try:
+                if os.path.exists(arquivo):
+                    os.remove(arquivo)
+                    print(f" > Temporário removido do disco: {arquivo}")
+            except Exception as error:
+                print(f"Erro na remoção imediata de {arquivo}: {error}")
+
+        # --- EVENTO DE LIMPEZA EM SEGUNDO PLANO ---
+        @after_this_request
+        def limpar_residuos_restantes(response):
+            for arquivo in arquivos_locais_para_limpar:
+                if os.path.exists(arquivo):
+                    try:
+                        os.remove(arquivo)
+                    except OSError as e:
+                        logging.error(f"Erro ao remover o arquivo {arquivo}: {e}")
+            return response
+
+        # ------------------------------------------
 
         return send_file(
-            caminho_zip,
+            memoria_zip,
             mimetype="application/zip",
             as_attachment=True,
             download_name=f"arquivos_layout_{nome_slug}.zip",
         )
 
     except Exception as e:
+        for arquivo in arquivos_locais_para_limpar:
+            if os.path.exists(arquivo):
+                try:
+                    os.remove(arquivo)
+                except OSError as e:
+                    logging.error(f"Erro ao remover o arquivo {arquivo}: {e}")
         return jsonify({"erro": str(e)}), 500
 
 

@@ -5,6 +5,15 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import cm
 from reportlab.pdfgen import canvas
 
+DIRETORIO_EXPORTADOR = os.path.dirname(os.path.abspath(__file__))
+PASTA_SRC = os.path.abspath(os.path.join(DIRETORIO_EXPORTADOR, ".."))
+
+PASTA_RAIZ_PROJETO = os.path.abspath(os.path.join(PASTA_SRC, ".."))
+
+PASTA_ASSETS = os.path.join(PASTA_RAIZ_PROJETO, "assets")
+
+print(f" > Buscando assets em: {PASTA_ASSETS}")
+
 
 class ExportadorPDF:
     @staticmethod
@@ -14,9 +23,10 @@ class ExportadorPDF:
         ESCALA = 0.1  # Escala 1:10
 
         # --- 1. CABEÇALHO ---
-        if os.path.exists("../assets/logo.png"):
+        caminho_logo = os.path.join(PASTA_ASSETS, "logo.png")
+        if os.path.exists(caminho_logo):
             c.drawImage(
-                "../assets/logo.png",
+                caminho_logo,
                 1 * cm,
                 h_page - 3.5 * cm,
                 height=2.5 * cm,
@@ -60,9 +70,10 @@ class ExportadorPDF:
             offset_x = (w_page - largura_real) / 2
 
             # --- 3. FUNDO DO BALCÃO ---
-            if os.path.exists("../assets/fundo_perfurado.png"):
+            caminho_fundo = os.path.join(PASTA_ASSETS, "fundo_perfurado.png")
+            if os.path.exists(caminho_fundo):
                 c.drawImage(
-                    "../assets/fundo_perfurado.png",
+                    caminho_fundo,
                     offset_x,
                     offset_y,
                     largura_real,
@@ -90,10 +101,14 @@ class ExportadorPDF:
                 y_pos = offset_y + altura_real - (item["y"] + item["h"]) * cm * ESCALA
 
                 is_circulo = item.get("formato") == "circulo"
+                caminho_panela_redonda = os.path.join(
+                    PASTA_ASSETS, "panela_redonda.png"
+                )
+                caminho_panela_retangular = os.path.join(
+                    PASTA_ASSETS, "panela_retangular.png"
+                )
                 img_path = (
-                    "../assets/panela_redonda.png"
-                    if is_circulo
-                    else "../assets/panela_retangular.png"
+                    caminho_panela_redonda if is_circulo else caminho_panela_retangular
                 )
 
                 if os.path.exists(img_path):
