@@ -7,6 +7,7 @@ import zipfile
 from flask import Flask, after_this_request, jsonify, request, send_file
 from flask_cors import CORS
 
+from database.database import inicializar_banco, obter_conexao
 from exportadores.pdf import ExportadorPDF
 from exportadores.pptx import ExportadorPPTX
 from modelos import PedidoCliente
@@ -16,6 +17,8 @@ from secoes import (
     SecaoPanelasRedondasComGaps,
     SecaoTorresGulosas,
 )
+
+inicializar_banco()
 
 app = Flask(__name__)
 CORS(app)
@@ -31,16 +34,35 @@ DIRETORIO_ATUAL = os.path.dirname(os.path.abspath(__file__))
 
 
 def carregar_catalogo_por_nome(nome_catalogo: str) -> list:
-    """Busca o arquivo de catálogo correspondente na pasta de catálogos."""
-    caminho_pasta = os.path.join(os.path.dirname(__file__), "..", "catalogos")
+    """Busca o catálogo no banco SQLite. Caso não ache, tenta ler o arquivo físico como fallback."""
+    try:
+        conn = obter_conexao()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT conteudo_json FROM catalogos WHERE nome_catalogo = ?",
+            (nome_catalogo,),
+        )
+        resultado = cursor.fetchone()
+        conn.close()
+
+        if resultado:
+            return json.loads(resultado["conteudo_json"])
+    except Exception as e:
+        print(f"Erro ao acessar SQLite para catálogo: {e}")
+
+    caminho_pasta = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", "catalogos"
+    )
     caminho_arquivo = os.path.join(caminho_pasta, f"{nome_catalogo}.json")
 
-    if not os.path.exists(caminho_arquivo):
-        # Fallback de segurança ou retorno de lista vazia caso não ache
-        return []
+    if os.path.exists(caminho_arquivo):
+        with open(caminho_arquivo, "r", encoding="utf-8") as f:
+            print(
+                f" > [Aviso] Catálogo '{nome_catalogo}' carregado via arquivo físico (Fallback)."
+            )
+            return json.load(f)
 
-    with open(caminho_arquivo, "r", encoding="utf-8") as f:
-        return json.load(f)
+    return []
 
 
 def construir_pipeline_desde_json(json_config, pedido):
@@ -94,15 +116,23 @@ def construir_pipeline_desde_json(json_config, pedido):
 
 @app.route("/api/catalogos", methods=["GET"])
 def listar_catalogos():
-    """Retorna os nomes de todos os arquivos de catálogos disponíveis para a UI."""
-    caminho_pasta = os.path.join(os.path.dirname(__file__), "..", "catalogos")
-    if not os.path.exists(caminho_pasta):
-        return jsonify(["catalogo_mestre", "catalogo_gaps", "catalogo_saladas"])
+    """Retorna os nomes de todos os catálogos disponíveis gravados no banco de dados."""
+    try:
+        conn = obter_conexao()
+        cursor = conn.cursor()
 
-    arquivos = [
-        f.replace(".json", "") for f in os.listdir(caminho_pasta) if f.endswith(".json")
-    ]
-    return jsonify(arquivos)
+        cursor.execute("SELECT nome_catalogo FROM catalogos ORDER BY nome_catalogo ASC")
+        linhas = cursor.fetchall()
+        conn.close()
+
+        nomes_catalogos = [linha["nome_catalogo"] for linha in linhas]
+
+        if not nomes_catalogos:
+            return jsonify(["catalogo_mestre", "catalogo_gaps", "catalogo_saladas"])
+
+        return jsonify(nomes_catalogos)
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
 
 
 @app.route("/api/schemas", methods=["GET"])
@@ -195,6 +225,65 @@ def processar_pipeline():
                     os.remove(arquivo)
                 except OSError as e:
                     logging.error(f"Erro ao remover o arquivo {arquivo}: {e}")
+        return jsonify({"erro": str(e)}), 500
+
+
+@app.route("/api/templates", methods=["GET"])
+def listar_templates():
+    """Retorna todos os modelos de pipelines salvos para alimentar o dropdown da UI."""
+    try:
+        conn = obter_conexao()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, nome_template, pipeline_secoes FROM templates_pipeline"
+        )
+        linhas = cursor.fetchall()
+        conn.close()
+
+        lista_templates = []
+        for linha in linhas:
+            lista_templates.append(
+                {
+                    "id": str(linha["id"]),
+                    "nome_template": linha["nome_template"],
+                    "pipeline_secoes": json.loads(
+                        linha["pipeline_secoes"]
+                    ),  # Deserializa o JSON
+                }
+            )
+
+        return jsonify(lista_templates)
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
+
+
+@app.route("/api/templates", methods=["POST"])
+def salvar_template():
+    """Grava um novo modelo configurado pela UI no banco."""
+    try:
+        dados = request.json
+        if not dados or "nome_template" not in dados or "pipeline_secoes" not in dados:
+            return jsonify({"erro": "Parâmetros obrigatórios ausentes"}), 400
+
+        nome_template = dados["nome_template"].strip()
+        pipeline_json_string = json.dumps(dados["pipeline_secoes"])
+
+        conn = obter_conexao()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            INSERT OR REPLACE INTO templates_pipeline (nome_template, pipeline_secoes)
+            VALUES (?, ?)
+        """,
+            (nome_template, pipeline_json_string),
+        )
+
+        conn.commit()
+        conn.close()
+
+        return jsonify({"mensagem": "Modelo gravado com sucesso!"}), 201
+    except Exception as e:
         return jsonify({"erro": str(e)}), 500
 
 

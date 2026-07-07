@@ -4,6 +4,10 @@ resultado_*
 catalogos/*
 .~lock*
 __pycache__
+
+dados.db
+popular_catalogos.py
+
 # VS Code
 .vscode/*
 .env
