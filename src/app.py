@@ -135,6 +135,74 @@ def listar_catalogos():
         return jsonify({"erro": str(e)}), 500
 
 
+@app.route("/api/catalogos/<string:nome_catalogo>", methods=["GET"])
+def obter_itens_catalogo(nome_catalogo):
+    """Retorna os itens internos de um catálogo específico."""
+    try:
+        conn = obter_conexao()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT conteudo_json FROM catalogos WHERE nome_catalogo = ?",
+            (nome_catalogo,),
+        )
+        linha = cursor.fetchone()
+        conn.close()
+
+        if linha:
+            return jsonify(json.loads(linha["conteudo_json"])), 200
+        return jsonify([]), 200
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
+
+
+@app.route("/api/catalogos/<string:nome_catalogo>", methods=["POST", "OPTIONS"])
+def salvar_itens_catalogo(nome_catalogo):
+    """Salva ou atualiza a lista de itens de um catálogo no SQLite."""
+    if request.method == "OPTIONS":
+        return jsonify({"status": "ok"}), 200
+
+    try:
+        itens = request.json  # Array de cubas vindas do front
+        if not isinstance(itens, list):
+            return jsonify(
+                {"erro": "O corpo da requisição deve ser uma lista de itens"}
+            ), 400
+
+        conteudo_string = json.dumps(itens, ensure_ascii=False)
+
+        conn = obter_conexao()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT OR REPLACE INTO catalogos (nome_catalogo, conteudo_json)
+            VALUES (?, ?)
+        """,
+            (nome_catalogo.strip(), conteudo_string),
+        )
+        conn.commit()
+        conn.close()
+
+        return jsonify({"mensagem": "Catálogo salvo com sucesso!"}), 200
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
+
+
+@app.route("/api/catalogos/<string:nome_catalogo>", methods=["DELETE"])
+def deletar_catalogo_inteiro(nome_catalogo):
+    """Remove um catálogo inteiro do banco de dados."""
+    try:
+        conn = obter_conexao()
+        cursor = conn.cursor()
+        cursor.execute(
+            "DELETE FROM catalogos WHERE nome_catalogo = ?", (nome_catalogo,)
+        )
+        conn.commit()
+        conn.close()
+        return jsonify({"mensagem": f"Catálogo {nome_catalogo} removido."}), 200
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
+
+
 @app.route("/api/schemas", methods=["GET"])
 def obter_schemas_secoes():
     """Varre as seções registradas extraindo dinamicamente o UI_SCHEMA de cada uma."""
@@ -257,32 +325,46 @@ def listar_templates():
         return jsonify({"erro": str(e)}), 500
 
 
-@app.route("/api/templates", methods=["POST"])
+@app.route("/api/templates", methods=["POST", "OPTIONS"])
 def salvar_template():
     """Grava um novo modelo configurado pela UI no banco."""
+    if request.method == "OPTIONS":
+        return jsonify({"status": "ok"}), 200
+
     try:
         dados = request.json
         if not dados or "nome_template" not in dados or "pipeline_secoes" not in dados:
             return jsonify({"erro": "Parâmetros obrigatórios ausentes"}), 400
 
         nome_template = dados["nome_template"].strip()
-        pipeline_json_string = json.dumps(dados["pipeline_secoes"])
+        pipeline_json_string = json.dumps(dados["pipeline_secoes"], ensure_ascii=False)
 
         conn = obter_conexao()
         cursor = conn.cursor()
 
-        cursor.execute(
-            """
-            INSERT OR REPLACE INTO templates_pipeline (nome_template, pipeline_secoes)
-            VALUES (?, ?)
-        """,
-            (nome_template, pipeline_json_string),
-        )
+        query = "INSERT OR REPLACE INTO templates_pipeline (nome_template, pipeline_secoes) VALUES (?, ?)"
+        cursor.execute(query, (nome_template, pipeline_json_string))
 
         conn.commit()
         conn.close()
 
         return jsonify({"mensagem": "Modelo gravado com sucesso!"}), 201
+
+    except Exception as e:
+        print(f"❌ Erro interno ao salvar template: {e}")
+        return jsonify({"erro": str(e)}), 500
+
+
+@app.route("/api/templates/<int:id_template>", methods=["DELETE"])
+def deletar_template(id_template):
+    """Remove um modelo de pipeline do banco de dados."""
+    try:
+        conn = obter_conexao()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM templates_pipeline WHERE id = ?", (id_template,))
+        conn.commit()
+        conn.close()
+        return jsonify({"mensagem": "Modelo deletado com sucesso!"}), 200
     except Exception as e:
         return jsonify({"erro": str(e)}), 500
 

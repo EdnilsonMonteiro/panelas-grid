@@ -6,6 +6,16 @@ from pptx.enum.shapes import MSO_CONNECTOR, MSO_SHAPE
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.util import Cm, Pt
 
+# ─────────────────────────────────────────────────────────────────────────────
+# LOGIC DE DIRETÓRIOS DINÂMICOS (IDÊNTICA AO PDF.PY)
+# ─────────────────────────────────────────────────────────────────────────────
+DIRETORIO_EXPORTADOR = os.path.dirname(os.path.abspath(__file__))
+PASTA_SRC = os.path.abspath(os.path.join(DIRETORIO_EXPORTADOR, ".."))
+PASTA_RAIZ_PROJETO = os.path.abspath(os.path.join(PASTA_SRC, ".."))
+PASTA_ASSETS = os.path.join(PASTA_RAIZ_PROJETO, "assets")
+
+print(f" > Buscando assets em: {PASTA_ASSETS}")
+
 
 class ExportadorPPTX:
     @staticmethod
@@ -17,10 +27,9 @@ class ExportadorPPTX:
         slide = prs.slides.add_slide(prs.slide_layouts[6])
 
         # --- 1. CABEÇALHO (Logo, Textos e Linha) ---
-        if os.path.exists("../assets/logo.png"):
-            slide.shapes.add_picture(
-                "../assets/logo.png", Cm(1), Cm(0.5), height=Cm(2.5)
-            )
+        caminho_logo = os.path.join(PASTA_ASSETS, "logo.png")
+        if os.path.exists(caminho_logo):
+            slide.shapes.add_picture(caminho_logo, Cm(1), Cm(0.5), height=Cm(2.5))
 
         # Texto descritivo abaixo da logo
         tx_desc = slide.shapes.add_textbox(Cm(0.8), Cm(3), Cm(15), Cm(1.5))
@@ -69,7 +78,6 @@ class ExportadorPPTX:
         ESCALA = 0.1
 
         for modulo in pedido.modulos:
-            # O SEGREDO ESTÁ AQUI: Envolver a matemática do tamanho final em Cm()
             largura_real = Cm(modulo.engine.L * ESCALA)
             altura_real = Cm(modulo.engine.P * ESCALA)
 
@@ -78,9 +86,10 @@ class ExportadorPPTX:
             offset_y = Cm(7)
 
             # --- 3. DESENHO DO BALCÃO ---
-            if os.path.exists("../assets/fundo_perfurado.png"):
+            caminho_fundo = os.path.join(PASTA_ASSETS, "fundo_perfurado.png")
+            if os.path.exists(caminho_fundo):
                 slide.shapes.add_picture(
-                    "../assets/fundo_perfurado.png",
+                    caminho_fundo,
                     offset_x,
                     offset_y,
                     largura_real,
@@ -95,17 +104,22 @@ class ExportadorPPTX:
 
             # --- 4. ALOCAÇÃO DAS PANELAS ---
             for item in modulo.engine.itens:
-                # O SEGREDO REPETIDO AQUI: Cm() em tudo que usa a Escala
                 x_pos = offset_x + Cm(item["x"] * ESCALA)
                 y_pos = offset_y + Cm(item["y"] * ESCALA)
                 w_dim = Cm(item["w"] * ESCALA)
                 h_dim = Cm(item["h"] * ESCALA)
 
                 is_circulo = item.get("formato") == "circulo"
+
+                caminho_panela_redonda = os.path.join(
+                    PASTA_ASSETS, "panela_redonda.png"
+                )
+                caminho_panela_retangular = os.path.join(
+                    PASTA_ASSETS, "panela_retangular.png"
+                )
+
                 img_path = (
-                    "../assets/panela_redonda.png"
-                    if is_circulo
-                    else "../assets/panela_retangular.png"
+                    caminho_panela_redonda if is_circulo else caminho_panela_retangular
                 )
 
                 if os.path.exists(img_path):
@@ -140,7 +154,7 @@ class ExportadorPPTX:
                 p_item.font.size = Pt(13)
                 p_item.font.color.rgb = RGBColor(0, 0, 0)
 
-            # --- 5. MARCADORES DE DIMENSÃO CORRIGIDOS ---
+            # --- 5. MARCADORES DE DIMENSÃO ---
 
             # 5.1. Chave Inferior (Largura)
             target_x = offset_x
@@ -170,7 +184,7 @@ class ExportadorPPTX:
             p_larg.text = f"{modulo.engine.L}cm"
             p_larg.alignment = PP_ALIGN.CENTER
             p_larg.font.bold = True
-            p_larg.font.size = Pt(16)  # Ajustado para visualização harmônica
+            p_larg.font.size = Pt(16)
 
             # 5.2. Chave Lateral Direita (Profundidade)
             chave_dir = slide.shapes.add_shape(
@@ -200,7 +214,7 @@ class ExportadorPPTX:
             p_prof.text = f"{modulo.engine.P}cm"
             p_prof.alignment = PP_ALIGN.LEFT
             p_prof.font.bold = True
-            p_prof.font.size = Pt(16)  # Ajustado para visualização harmônica
+            p_prof.font.size = Pt(16)
 
         prs.save(nome_arquivo)
         print(f" > Layout PPTX centralizado e exportado com sucesso: '{nome_arquivo}'")
