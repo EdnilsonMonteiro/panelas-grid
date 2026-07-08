@@ -1,4 +1,5 @@
 import copy
+import math
 from abc import ABC, abstractmethod
 
 
@@ -214,17 +215,24 @@ class SecaoMioloTorres(Secao):
 
 
 class SecaoPanelasRedondasComGaps(SecaoMioloTorres):
-    """Encapsula as panelas redondas e o preenchimento de gaps abaixo delas."""
+    """Encapsula as panelas redondas e o preenchimento de gaps abaixo delas dinamicamente."""
 
     UI_SCHEMA = {
         "tipo": "SecaoPanelasRedondasComGaps",
-        "nome_amigavel": "Panelas Redondas + Gaps",
-        "descricao": "Aloca panelas redondas e preenche o espaço inferior com torres.",
+        "nome_amigavel": "Panelas Redondas + Gaps Dinâmicos",
+        "descricao": "Aloca panelas baseadas em catálogo e preenche o espaço inferior com cubas.",
         "campos": [
+            {
+                "nome": "catalogo_panelas",
+                "tipo": "catalogo",
+                "label": "Catálogo de Panelas Redondas",
+                "default": "panelas_redondas",
+            },
             {
                 "nome": "catalogo_gaps",
                 "tipo": "catalogo",
-                "label": "Catálogo para Gaps",
+                "label": "Catálogo para Gaps (Cubas)",
+                "default": "catalogo_gaps",
             },
             {
                 "nome": "qtd_panelas",
@@ -242,24 +250,80 @@ class SecaoPanelasRedondasComGaps(SecaoMioloTorres):
     }
 
     def __init__(
-        self, nome, qtd_panelas=4, catalogo_gaps=None, pct_largura_alvo=0.8, **kwargs
+        self,
+        nome,
+        qtd_panelas=4,
+        catalogo_panelas=None,
+        catalogo_gaps=None,
+        pct_largura_alvo=0.8,
+        **kwargs,
     ):
         self.qtd_panelas = qtd_panelas
-        self.catalogo_gaps = catalogo_gaps
+        self.catalogo_panelas = catalogo_panelas or []
+        self.catalogo_gaps = catalogo_gaps or []
 
         super().__init__(nome=nome, pct_largura_alvo=pct_largura_alvo, **kwargs)
 
+    def _obter_diametros_permitidos(self):
+        """Extrai os diâmetros únicos do catálogo de panelas, ordenando do maior para o menor."""
+        if not self.catalogo_panelas:
+            # Fallback de segurança caso o catálogo venha vazio
+            return [34, 32, 30, 28, 26, 24, 22]
+
+        diametros = set()
+        for item in self.catalogo_panelas:
+            # Aceita chaves flexíveis do JSON ('diametro', 'w' ou 'largura')
+            d = item.get("diametro", item.get("w", item.get("largura", 0)))
+            if d > 0:
+                diametros.add(float(d))
+
+        return sorted(list(diametros), reverse=True)
+
+    def _calcular_altura_minima_gaps(self):
+        """
+        Analisa o catálogo de cubas e descobre qual é a menor altura física que uma peça
+        consegue ocupar na grade vertical, considerando a possibilidade de rotação.
+        """
+        if not self.catalogo_gaps:
+            return 13.0  # Fallback de segurança caso não existam cubas cadastradas
+
+        alturas_possiveis = []
+        for item in self.catalogo_gaps:
+            w = float(item.get("w", item.get("largura", 0)))
+            h = float(item.get("h", item.get("altura", 0)))
+            pode_rotacionar = item.get("rotacionar", True)
+
+            if w <= 0 or h <= 0:
+                continue
+
+            if pode_rotacionar:
+                # Se pode rotacionar, o menor lado pode virar a altura
+                alturas_possiveis.append(min(w, h))
+            else:
+                # Se não pode rotacionar, a altura estrita é 'h'
+                alturas_possiveis.append(h)
+
+        return min(alturas_possiveis) if alturas_possiveis else 13.0
+
     def executar_alocacao(self, modulo, x_min, x_max, catalogo):
-        self.alocar_panelas_redondas_inteligente(
+        # 1. Executa a alocação e captura qual foi o diâmetro efetivamente escolhido pelo algoritmo
+        melhor_diametro, melhor_linhas = self.alocar_panelas_redondas_inteligente(
             engine=modulo.engine,
             qtd_desejada=self.qtd_panelas,
             x_min=x_min,
             x_max=x_max,
         )
+
         limite_fisico_s1 = modulo.engine.obter_limite_direito()
 
-        altura_restante_s1 = modulo.engine.P - 34.0
+        # CORREÇÃO: A altura restante agora depende dinamicamente de quantas linhas de panela foram usadas
+        # Se usamos 2 linhas de panela, a altura ocupada é (2 * d) + espaco
+        altura_ocupada_panelas = (melhor_linhas * melhor_diametro) + (
+            (melhor_linhas - 1) * modulo.engine.espaco
+        )
+        altura_restante_s1 = modulo.engine.P - altura_ocupada_panelas
 
+        # 2. Busca a melhor combinação vertical usando apenas o catálogo de cubas injetado
         torres_s1 = self.buscar_melhor_combinacao_vertical(
             self.catalogo_gaps,
             altura_maxima=altura_restante_s1,
@@ -271,24 +335,80 @@ class SecaoPanelasRedondasComGaps(SecaoMioloTorres):
         )
 
     def alocar_panelas_redondas_inteligente(self, engine, qtd_desejada, x_min, x_max):
-        diametros_permitidos = [34, 32, 30, 28, 26, 24, 22]
-        melhor_diametro = diametros_permitidos[-1]
-        melhor_linhas_por_coluna = 1
-        melhor_aproveitamento_v = 0
+        # Extração dinâmica de dados dos catálogos
+        diametros_permitidos = self._obter_diametros_permitidos()
+        altura_minima_gaps = self._calcular_altura_minima_gaps()
 
+        largura_disponivel = x_max - x_min
+        configuracoes_validas = []
+
+        # Fase de Planejamento
         for d in diametros_permitidos:
             for linhas in range(1, qtd_desejada + 1):
                 altura_total = (linhas * d) + ((linhas - 1) * engine.espaco)
-                if altura_total <= engine.P:
-                    if altura_total > melhor_aproveitamento_v:
-                        melhor_aproveitamento_v = float(altura_total)
+
+                if altura_total > engine.P:
+                    continue
+
+                colunas_necessarias = math.ceil(qtd_desejada / linhas)
+                largura_total = (colunas_necessarias * d) + (
+                    (colunas_necessarias - 1) * engine.espaco
+                )
+
+                if largura_total <= largura_disponivel:
+                    configuracoes_validas.append({"d": d, "linhas": linhas})
+
+        # Fase de Decisão Baseada em Heurística Dinâmica
+        if configuracoes_validas:
+
+            def avaliar_configuracao(c):
+                d = c["d"]
+                linhas = c["linhas"]
+
+                # Espaço morto que sobra verticalmente após colocar essa configuração de panelas
+                altura_ocupada = (linhas * d) + ((linhas - 1) * engine.espaco)
+                gap_restante = engine.P - altura_ocupada
+
+                # REGRA DE OURO DINÂMICA:
+                # Se as panelas são grandes (maiores que a média do catálogo), dispostas em 1 linha,
+                # E o gap restante é suficiente para abrigar pelo menos a menor dimensão útil de cuba identificada.
+                diametro_medio = sum(diametros_permitidos) / len(diametros_permitidos)
+
+                if (
+                    linhas == 1
+                    and d >= diametro_medio
+                    and gap_restante >= altura_minima_gaps
+                ):
+                    prioridade_layout = 3
+
+                # REGRA SECUNDÁRIA:
+                # Se colocar lado a lado não vai deixar espaço útil para cubas abaixo,
+                # preferimos empilhar panelas menores (2 linhas) para usar a altura total.
+                elif linhas == 2 and d < diametro_medio:
+                    prioridade_layout = 2
+
+                else:
+                    prioridade_layout = 1
+
+                return (prioridade_layout, d, -linhas)
+
+            configuracoes_validas.sort(key=avaliar_configuracao, reverse=True)
+
+            melhor_config = configuracoes_validas[0]
+            melhor_diametro = melhor_config["d"]
+            melhor_linhas_por_coluna = melhor_config["linhas"]
+        else:
+            # Fallback de segurança absoluto
+            melhor_diametro = diametros_permitidos[-1]
+            melhor_linhas_por_coluna = 1
+            for d in diametros_permitidos:
+                for linhas in range(1, qtd_desejada + 1):
+                    if (linhas * d) + ((linhas - 1) * engine.espaco) <= engine.P:
                         melhor_diametro = d
                         melhor_linhas_por_coluna = linhas
+                        break
 
-        print(
-            f" -> Configuração de Panelas Escolhida: Ø{melhor_diametro}cm disposto em {melhor_linhas_por_coluna} linha(s)"
-        )
-
+        # Fase de Alocação Física na Engine
         alocadas = 0
         x_atual = x_min
 
@@ -299,7 +419,8 @@ class SecaoPanelasRedondasComGaps(SecaoMioloTorres):
             for l in range(melhor_linhas_por_coluna):
                 if alocadas + len(itens_da_coluna) >= qtd_desejada:
                     break
-                nome = (
+
+                nome_prato = (
                     "Arroz" if (alocadas + len(itens_da_coluna)) % 2 == 0 else "Feijão"
                 )
 
@@ -308,7 +429,7 @@ class SecaoPanelasRedondasComGaps(SecaoMioloTorres):
                 ):
                     itens_da_coluna.append(
                         {
-                            "nome": f"{nome} {alocadas + len(itens_da_coluna) + 1}",
+                            "nome": f"{nome_prato} {alocadas + len(itens_da_coluna) + 1}",
                             "x": x_atual,
                             "y": y_atual,
                             "w": melhor_diametro,
@@ -341,8 +462,7 @@ class SecaoPanelasRedondasComGaps(SecaoMioloTorres):
                 else:
                     break
 
-        print(f" > Panelas Redondas Alocadas: {alocadas}/{qtd_desejada}")
-        return alocadas
+        return melhor_diametro, melhor_linhas_por_coluna
 
 
 class SecaoItensFixos(Secao):
