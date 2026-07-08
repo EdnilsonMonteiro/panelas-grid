@@ -91,16 +91,30 @@ class ExportadorPDF:
                 h_dim = item["h"] * cm * ESCALA
 
                 x_pos = offset_x + item["x"] * cm * ESCALA
-
-                # ─────────────────────────────────────────────────────────────
-                # CORREÇÃO DO EIXO Y
-                # O motor de layout usa y=0 no TOPO (eixo cresce para baixo).
-                # O ReportLab usa y=0 na BASE (eixo cresce para cima).
-                # Fórmula: y_RL = offset_y + altura_total - (y_motor + h_item)
-                # ─────────────────────────────────────────────────────────────
                 y_pos = offset_y + altura_real - (item["y"] + item["h"]) * cm * ESCALA
 
                 is_circulo = item.get("formato") == "circulo"
+
+                # AJUSTE VISUAL PARA PANELAS REDONDAS (Evita distorção das alças)
+                if is_circulo:
+                    w_original = w_dim
+                    h_original = h_dim
+
+                    # O diâmetro real (círculo) deve comandar a altura para não achatar
+                    # Usamos a menor aresta original como base para o círculo limpo
+                    diametro_base = min(w_original, h_original)
+
+                    # Corrigimos a proporção: para o PNG não achatar, a largura com alças
+                    # precisa ser ligeiramente maior que a altura (~1.08 vezes maior)
+                    h_dim = diametro_base * 0.95
+                    w_dim = (
+                        h_dim * 1.08
+                    )  # Dá o ganho necessário para as alças respirarem nas laterais
+
+                    # Centraliza a imagem corrigida no espaço de colisão original
+                    x_pos += (w_original - w_dim) / 2
+                    y_pos += (h_original - h_dim) / 2
+
                 caminho_panela_redonda = os.path.join(
                     PASTA_ASSETS, "panela_redonda.png"
                 )
@@ -112,12 +126,20 @@ class ExportadorPDF:
                 )
 
                 if os.path.exists(img_path):
-                    c.drawImage(img_path, x_pos, y_pos, w_dim, h_dim, mask="auto")
+                    if is_circulo:
+                        c.saveState()
+                        c.translate(x_pos + w_dim / 2, y_pos + h_dim / 2)
+                        c.rotate(33.8)
+                        c.drawImage(
+                            img_path, -w_dim / 2, -h_dim / 2, w_dim, h_dim, mask="auto"
+                        )
+                        c.restoreState()
+                    else:
+                        c.drawImage(img_path, x_pos, y_pos, w_dim, h_dim, mask="auto")
                 else:
                     c.setFillColor(white)
                     c.setStrokeColor(black)
                     if is_circulo:
-                        # ellipse(x1, y1, x2, y2): canto inferior-esquerdo e superior-direito
                         c.ellipse(
                             x_pos, y_pos, x_pos + w_dim, y_pos + h_dim, fill=1, stroke=1
                         )
@@ -135,9 +157,7 @@ class ExportadorPDF:
                 # y_pos é o fundo da panela em coords RL → centro = y_pos + h_dim/2
                 c.drawCentredString(
                     x_pos + w_dim / 2,
-                    y_pos
-                    + h_dim / 2
-                    - 3,  # -3pt para centralizar visualmente a baseline
+                    y_pos + h_dim / 2 - 3,
                     texto_panela,
                 )
 

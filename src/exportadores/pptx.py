@@ -111,6 +111,21 @@ class ExportadorPPTX:
 
                 is_circulo = item.get("formato") == "circulo"
 
+                if is_circulo:
+                    w_original = w_dim
+                    h_original = h_dim
+
+                    # Baseia o cálculo na menor dimensão para isolar o diâmetro do círculo
+                    diametro_base = min(item["w"], item["h"]) * ESCALA
+
+                    # Define a altura real do círculo e expande a largura para as alças
+                    h_dim = Cm(diametro_base * 0.95)
+                    w_dim = Cm(diametro_base * 0.95 * 1.08)
+
+                    # Centraliza no spot original do grid
+                    x_pos = x_pos + (w_original - w_dim) / 2
+                    y_pos = y_pos + (h_original - h_dim) / 2
+
                 caminho_panela_redonda = os.path.join(
                     PASTA_ASSETS, "panela_redonda.png"
                 )
@@ -123,7 +138,11 @@ class ExportadorPPTX:
                 )
 
                 if os.path.exists(img_path):
-                    slide.shapes.add_picture(img_path, x_pos, y_pos, w_dim, h_dim)
+                    foto = slide.shapes.add_picture(
+                        img_path, x_pos, y_pos, w_dim, h_dim
+                    )
+                    if is_circulo:
+                        foto.rotation = 33.8
                 else:
                     forma_fallback = (
                         MSO_SHAPE.OVAL if is_circulo else MSO_SHAPE.ROUNDED_RECTANGLE
@@ -133,6 +152,8 @@ class ExportadorPPTX:
                     )
                     fb.fill.solid()
                     fb.fill.fore_color.rgb = RGBColor(255, 255, 255)
+                    if is_circulo:
+                        fb.rotation = 33.8
 
                 # Texto dentro da panela
                 tx_item = slide.shapes.add_textbox(x_pos, y_pos, w_dim, h_dim)
