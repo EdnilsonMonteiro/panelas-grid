@@ -132,6 +132,7 @@ class SecaoMioloTorres(Secao):
 
     def __init__(self, nome, pct_largura_alvo=0.7, **kwargs):
         super().__init__(nome, pct_largura_alvo)
+        self.catalogo_especifico = kwargs.get("catalogo", None)
 
     def buscar_melhor_combinacao_vertical(self, catalogo, altura_maxima, espaco):
         """Busca combinações verticais maximizando a altura usada."""
@@ -206,9 +207,17 @@ class SecaoMioloTorres(Secao):
         return melhores_torres
 
     def executar_alocacao(self, modulo, x_min, x_max, catalogo):
+        if isinstance(self.catalogo_especifico, str) and isinstance(catalogo, dict):
+            cat_para_usar = catalogo.get(self.catalogo_especifico, catalogo)
+        else:
+            cat_para_usar = (
+                self.catalogo_especifico if self.catalogo_especifico else catalogo
+            )
+
         torres_miolo = self.buscar_melhor_combinacao_vertical(
-            catalogo, altura_maxima=modulo.engine.P, espaco=modulo.engine.espaco
+            cat_para_usar, altura_maxima=modulo.engine.P, espaco=modulo.engine.espaco
         )
+
         modulo.engine.preencher_secao_com_torres(
             torres_miolo, x_min=x_min, x_max=x_max, nome_secao=self.nome
         )
