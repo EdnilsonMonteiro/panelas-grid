@@ -6,9 +6,9 @@ from pptx.enum.shapes import MSO_CONNECTOR, MSO_SHAPE
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.util import Cm, Pt
 
-# ─────────────────────────────────────────────────────────────────────────────
-# LOGIC DE DIRETÓRIOS DINÂMICOS (IDÊNTICA AO PDF.PY)
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────
+# LOGIC DE DIRETÓRIOS DINÂMICOS
+# ─────────────────────────────────────────────────────
 DIRETORIO_EXPORTADOR = os.path.dirname(os.path.abspath(__file__))
 PASTA_SRC = os.path.abspath(os.path.join(DIRETORIO_EXPORTADOR, ".."))
 PASTA_RAIZ_PROJETO = os.path.abspath(os.path.join(PASTA_SRC, ".."))
@@ -114,17 +114,14 @@ class ExportadorPPTX:
                 if is_circulo:
                     w_original = w_dim
                     h_original = h_dim
-
-                    # Baseia o cálculo na menor dimensão para isolar o diâmetro do círculo
                     diametro_base = min(item["w"], item["h"]) * ESCALA
-
-                    # Define a altura real do círculo e expande a largura para as alças
                     h_dim = Cm(diametro_base * 0.95)
                     w_dim = Cm(diametro_base * 0.95 * 1.08)
-
-                    # Centraliza no spot original do grid
                     x_pos = x_pos + (w_original - w_dim) / 2
                     y_pos = y_pos + (h_original - h_dim) / 2
+
+                # PASSO 1: Criar o Grupo no Slide
+                grupo = slide.shapes.add_group_shape()
 
                 caminho_panela_redonda = os.path.join(
                     PASTA_ASSETS, "panela_redonda.png"
@@ -132,39 +129,38 @@ class ExportadorPPTX:
                 caminho_panela_retangular = os.path.join(
                     PASTA_ASSETS, "panela_retangular.png"
                 )
-
                 img_path = (
                     caminho_panela_redonda if is_circulo else caminho_panela_retangular
                 )
 
+                # PASSO 2: Adicionar a Travessa DENTRO do Grupo
+                shape_travessa = None
                 if os.path.exists(img_path):
-                    foto = slide.shapes.add_picture(
+                    shape_travessa = grupo.shapes.add_picture(
                         img_path, x_pos, y_pos, w_dim, h_dim
                     )
                     if is_circulo:
-                        foto.rotation = 33.8
+                        shape_travessa.rotation = 33.8
                 else:
                     forma_fallback = (
                         MSO_SHAPE.OVAL if is_circulo else MSO_SHAPE.ROUNDED_RECTANGLE
                     )
-                    fb = slide.shapes.add_shape(
+                    shape_travessa = grupo.shapes.add_shape(
                         forma_fallback, x_pos, y_pos, w_dim, h_dim
                     )
-                    fb.fill.solid()
-                    fb.fill.fore_color.rgb = RGBColor(255, 255, 255)
+                    shape_travessa.fill.solid()
+                    shape_travessa.fill.fore_color.rgb = RGBColor(255, 255, 255)
                     if is_circulo:
-                        fb.rotation = 33.8
+                        shape_travessa.rotation = 33.8
 
-                # Texto dentro da panela
-                tx_item = slide.shapes.add_textbox(x_pos, y_pos, w_dim, h_dim)
-
+                # PASSO 3: Adicionar o Texto DENTRO do Grupo
+                tx_item = grupo.shapes.add_textbox(x_pos, y_pos, w_dim, h_dim)
                 tf_item = tx_item.text_frame
                 tf_item.word_wrap = False
                 tf_item.vertical_anchor = MSO_ANCHOR.MIDDLE
-                tf_item.margin_top = Cm(0)
-                tf_item.margin_bottom = Cm(0)
-                tf_item.margin_left = Cm(0)
-                tf_item.margin_right = Cm(0)
+                tf_item.margin_top = tf_item.margin_bottom = tf_item.margin_left = (
+                    tf_item.margin_right
+                ) = Cm(0)
 
                 p_item = tf_item.paragraphs[0]
                 p_item.text = (
@@ -174,6 +170,8 @@ class ExportadorPPTX:
                 p_item.font.bold = True
                 p_item.font.size = Pt(13)
                 p_item.font.color.rgb = RGBColor(0, 0, 0)
+
+                grupo.name = f"Travessa_{item['nome']}"
 
             # --- 5. MARCADORES DE DIMENSÃO ---
 
