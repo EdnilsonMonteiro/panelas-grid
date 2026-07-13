@@ -11,11 +11,10 @@ class Secao(ABC):
         self.pct_largura_alvo = pct_largura_alvo
 
     def buscar_melhor_combinacao_vertical(self, catalogo, altura_maxima, espaco):
-        """Busca combinações verticais maximizando a altura usada."""
+        """Busca combinações verticais maximizando a altura usada de forma precisa."""
         catalogo_isolado = copy.deepcopy(catalogo)
-        print("Catálogo Utilizado:")
-        print(catalogo_isolado)
         itens_por_largura = {}
+
         for item in catalogo_isolado:
             w, h = item["w"], item["h"]
             if w not in itens_por_largura:
@@ -31,41 +30,39 @@ class Secao(ABC):
         melhores_torres = []
 
         for lw, itens_disponiveis in itens_por_largura.items():
-            # itens_disponiveis contém os tipos únicos de cubas daquela largura (ex: M, Meio, P)
-            melhor_soma = 0
+            melhor_soma = 0.0
             melhor_combinacao = []
-            maior_peca_da_comb = 0
+            maior_peca_da_comb = 0.0
 
             def encontrar_comb(soma_atual, comb_atual):
                 nonlocal melhor_soma, melhor_combinacao, maior_peca_da_comb
 
                 qtd_gaps = len(comb_atual) - 1
                 custo_espaco = max(0, qtd_gaps * espaco)
-                total_com_espaco = soma_atual + custo_espaco
+                total_com_espaco = round(soma_atual + custo_espaco, 2)
 
-                # Se estourar a altura do balcão (95cm), interrompe esta ramificação
                 if total_com_espaco > altura_maxima:
                     return
 
-                peca_max_atual = max([x["h"] for x in comb_atual]) if comb_atual else 0
+                peca_max_atual = (
+                    max([x["h"] for x in comb_atual]) if comb_atual else 0.0
+                )
 
-                # Verifica se esta combinação é melhor do que a encontrada anteriormente
+                # CORREÇÃO: Tolerância de float ajustada com round nas comparações
                 if (total_com_espaco > melhor_soma) or (
-                    abs(total_com_espaco - melhor_soma) < 0.1
+                    abs(round(total_com_espaco - melhor_soma, 2)) < 0.01
                     and peca_max_atual > maior_peca_da_comb
                 ):
                     melhor_soma = total_com_espaco
                     melhor_combinacao = list(comb_atual)
                     maior_peca_da_comb = peca_max_atual
 
-                # PERMISSÃO DE STOCK INFINITO: Sempre varre TODOS os tipos disponíveis
-                # permitindo acumular múltiplas cubas do mesmo tamanho (ex: 3 Cubas P)
                 for item in itens_disponiveis:
                     comb_atual.append(item)
                     encontrar_comb(soma_atual + item["h"], comb_atual)
                     comb_atual.pop()
 
-            encontrar_comb(0, [])
+            encontrar_comb(0.0, [])
             if melhor_combinacao:
                 melhores_torres.append(
                     {
@@ -78,8 +75,6 @@ class Secao(ABC):
         melhores_torres = sorted(
             melhores_torres, key=lambda x: x["aproveitamento"], reverse=True
         )
-        print("Melhores torres calculadas")
-        print(melhores_torres)
         return melhores_torres
 
     def buscar_torres_gulosas(self, catalogo, altura_maxima, espaco):
@@ -109,12 +104,13 @@ class Secao(ABC):
             itens_da_torre = []
             altura_ocupada = 0.0
 
-            # LÓGICA GULOSA:
-            # Tenta a maior peça. Se couber, repete. Se não, vai pra próxima.
             for item in itens_disponiveis:
                 while True:
-                    espaco_extra = espaco if itens_da_torre else 0
-                    altura_projetada = altura_ocupada + espaco_extra + item["h"]
+                    espaco_extra = espaco if itens_da_torre else 0.0
+                    # CORREÇÃO: Aplica round direto na projeção da soma
+                    altura_projetada = round(
+                        altura_ocupada + espaco_extra + item["h"], 2
+                    )
 
                     if altura_projetada <= altura_maxima:
                         itens_da_torre.append(item)
@@ -134,8 +130,6 @@ class Secao(ABC):
         torres_gulosas = sorted(
             torres_gulosas, key=lambda x: x["aproveitamento"], reverse=True
         )
-
-        print(f"Torres gulosas calculadas para a seção: {self.nome}")
         return torres_gulosas
 
     @abstractmethod
@@ -491,7 +485,7 @@ class SecaoPanelasRedondasComGaps(Secao):
                 )
 
                 if engine.cabe(x_atual, y_atual, melhor_diametro, melhor_diametro) and (
-                    x_atual + melhor_diametro <= x_max
+                    round(x_atual + melhor_diametro, 2) <= round(x_max, 2)
                 ):
                     itens_da_coluna.append(
                         {
@@ -503,15 +497,17 @@ class SecaoPanelasRedondasComGaps(Secao):
                             "formato": "circulo",
                         }
                     )
-                    y_atual += melhor_diametro + engine.espaco
+                    y_atual = round(y_atual + melhor_diametro + engine.espaco, 2)
                 else:
                     break
 
             if itens_da_coluna:
                 engine.itens.extend(itens_da_coluna)
                 alocadas += len(itens_da_coluna)
-                x_atual += melhor_diametro + engine.espaco
+                # Avança a coluna X somando o diâmetro + o espaço configurado
+                x_atual = round(x_atual + melhor_diametro + engine.espaco, 2)
             else:
+                # Se não coube nesta coordenada X, pula para o próximo ponto disponível calculado pela engine
                 passos_x = sorted(
                     list(
                         set(

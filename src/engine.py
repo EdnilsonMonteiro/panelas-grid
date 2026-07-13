@@ -30,24 +30,30 @@ class LayoutEngine:
     def alocar_na_secao(
         self, nome, w, h, x_min, x_max, formato="retangulo", rotacionar=False
     ):
-        """Heurística Bottom-Left dentro de uma zona específica."""
+        """Heurística Bottom-Left dentro de uma zona específica com tratamento de espaçamento corrigido."""
         x_max = min(x_max, self.L)
 
-        passos_x = [x_min] + [
-            i["x"] + i["w"] + self.espaco for i in self.itens if i["x"] >= x_min
-        ]
-        passos_y = [0.0] + [i["y"] + i["h"] + self.espaco for i in self.itens]
+        passos_x = [x_min]
+        for i in self.itens:
+            ponto_dir = round(i["x"] + i["w"] + self.espaco, 2)
+            if x_min <= ponto_dir <= x_max:
+                passos_x.append(ponto_dir)
 
-        passos_x = sorted(list(set([round(p, 2) for p in passos_x])))
-        passos_y = sorted(list(set([round(p, 2) for p in passos_y])))
+        passos_y = [0.0]
+        for i in self.itens:
+            ponto_sup = round(i["y"] + i["h"] + self.espaco, 2)
+            if ponto_sup <= self.P:
+                passos_y.append(ponto_sup)
+
+        passos_x = sorted(list(set(passos_x)))
+        passos_y = sorted(list(set(passos_y)))
 
         for px in passos_x:
             if px + w > x_max and (not rotacionar or px + h > x_max):
                 continue
 
             for py in passos_y:
-                # 1. Tenta a orientação original
-                if px + w <= x_max and self.cabe(px, py, w, h):
+                if round(px + w, 2) <= x_max and self.cabe(px, py, w, h):
                     self.itens.append(
                         {
                             "nome": nome,
@@ -60,9 +66,8 @@ class LayoutEngine:
                     )
                     return True
 
-                # 2. Tenta rotacionada (se permitido pelo catálogo)
                 if rotacionar and formato == "retangulo":
-                    if px + h <= x_max and self.cabe(px, py, h, w):
+                    if round(px + h, 2) <= x_max and self.cabe(px, py, h, w):
                         self.itens.append(
                             {
                                 "nome": nome,
@@ -77,27 +82,30 @@ class LayoutEngine:
         return False
 
     def alocar_torre_na_secao(self, torre, x_min, x_max):
-        """
-        Tenta alocar uma estrutura de torre vertical completa em um passo X estável.
-        Garante que todos os elementos da combinação entrem juntos.
-        """
+        """Tenta alocar uma estrutura de torre vertical completa respeitando espaçamentos de seções adjacentes."""
         x_max = min(x_max, self.L)
         w_torre = torre["largura"]
 
-        passos_x = [x_min] + [
-            i["x"] + i["w"] + self.espaco for i in self.itens if i["x"] >= x_min
-        ]
-        passos_y = [0.0] + [i["y"] + i["h"] + self.espaco for i in self.itens]
+        passos_x = [x_min]
+        for i in self.itens:
+            ponto_dir = round(i["x"] + i["w"] + self.espaco, 2)
+            if x_min <= ponto_dir <= x_max:
+                passos_x.append(ponto_dir)
 
-        passos_x = sorted(list(set([round(p, 2) for p in passos_x])))
-        passos_y = sorted(list(set([round(p, 2) for p in passos_y])))
+        passos_y = [0.0]
+        for i in self.itens:
+            ponto_sup = round(i["y"] + i["h"] + self.espaco, 2)
+            if ponto_sup <= self.P:
+                passos_y.append(ponto_sup)
+
+        passos_x = sorted(list(set(passos_x)))
+        passos_y = sorted(list(set(passos_y)))
 
         for px in passos_x:
             if px + w_torre > x_max:
                 continue
 
             for py in passos_y:
-                # Verifica se a torre inteira cabe verticalmente a partir deste ponto Y
                 y_atual = py
                 torre_cabe = True
                 itens_temporarios = []
@@ -114,15 +122,13 @@ class LayoutEngine:
                                 "formato": "retangulo",
                             }
                         )
-                        y_atual += item["h"] + self.espaco
+                        y_atual = round(y_atual + item["h"] + self.espaco, 2)
                     else:
                         torre_cabe = False
                         break
 
                 if torre_cabe:
-                    # Se o conjunto completo passou no teste, consolida no balcão
-                    print("Itens que couberam:")
-                    print(itens_temporarios)
+                    print(f"Torre acoplada com sucesso em X:{px} Y:{py}!")
                     self.itens.extend(itens_temporarios)
                     return True
         return False

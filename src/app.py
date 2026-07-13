@@ -72,9 +72,14 @@ def construir_pipeline_desde_json(json_config, pedido):
     conf_balcao = json_config["configuracao_balcao"]
 
     cat_completo_global = carregar_catalogo_por_nome("catalogo_mestre")
+    espacamento_ui = conf_balcao.get("espaco", 0.5)
+    print(f"Espaçamento UI: {espacamento_ui}")
 
     modulo = pedido.adicionar_modulo(
-        tipo_rampa="quente", largura=conf_balcao["L"], profundidade=conf_balcao["P"]
+        tipo_rampa="quente",
+        largura=conf_balcao["L"],
+        profundidade=conf_balcao["P"],
+        espacamento_cm=float(espacamento_ui),
     )
 
     for config_secao in json_config["pipeline_secoes"]:
