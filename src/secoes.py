@@ -359,39 +359,51 @@ class SecaoPanelasRedondasComGaps(Secao):
             altura_maxima=altura_restante_s1,
             x_min=x_min,
             x_max=limite_fisico_s1,
+            altura_ocupada_panelas=altura_ocupada_panelas,
         )
 
     # --- Implementação das Estratégias (Isoladas e Limpas) ---
     def _preencher_combinacao_vertical(
-        self, modulo, catalogo, altura_maxima, x_min, x_max
+        self, modulo, catalogo, altura_maxima, x_min, x_max, altura_ocupada_panelas
     ):
-        """Estratégia 1: Combinação Combinatória Vertical Eficiente"""
         torres = self.buscar_melhor_combinacao_vertical(
-            catalogo,
-            altura_maxima=altura_maxima,
-            espaco=modulo.engine.espaco,
+            catalogo, altura_maxima=altura_maxima, espaco=modulo.engine.espaco
         )
+        # Passamos a linha de início e o fundo máximo como teto e piso
         modulo.engine.preencher_secao_com_torres(
-            torres, x_min=x_min, x_max=x_max, nome_secao=self.nome
+            torres,
+            x_min=x_min,
+            x_max=x_max,
+            nome_secao=self.nome,
+            y_limite_inf=altura_ocupada_panelas,
+            y_limite_sup=modulo.engine.P,
         )
 
-    def _preencher_torres_gulosas(self, modulo, catalogo, altura_maxima, x_min, x_max):
-        """Estratégia 2: Algoritmo Guloso (Greedy Towers) respeitando o limite restrito"""
+    def _preencher_torres_gulosas(
+        self, modulo, catalogo, altura_maxima, x_min, x_max, altura_ocupada_panelas
+    ):
         torres = self.buscar_torres_gulosas(
             catalogo, altura_maxima=altura_maxima, espaco=modulo.engine.espaco
         )
         modulo.engine.preencher_secao_com_torres(
-            torres, x_min=x_min, x_max=x_max, nome_secao=self.nome
+            torres,
+            x_min=x_min,
+            x_max=x_max,
+            nome_secao=self.nome,
+            y_limite_inf=altura_ocupada_panelas,
+            y_limite_sup=modulo.engine.P,
         )
 
-    def _preencher_itens_fixos(self, modulo, catalogo, altura_maxima, x_min, x_max):
-        """Estratégia 3: Alocação sequencial linear de itens pré-definidos"""
+    def _preencher_itens_fixos(
+        self, modulo, catalogo, altura_maxima, x_min, x_max, altura_ocupada_panelas
+    ):
         modulo.engine.preencher_secao(
             catalogo,
             x_min=x_min,
             x_max=x_max,
             nome_secao=self.nome,
-            altura_limite=altura_maxima,
+            y_limite_inf=altura_ocupada_panelas,
+            y_limite_sup=modulo.engine.P,
         )
 
     def alocar_panelas_redondas_inteligente(self, engine, qtd_desejada, x_min, x_max):
