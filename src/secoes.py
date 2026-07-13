@@ -10,130 +10,6 @@ class Secao(ABC):
         self.nome = nome
         self.pct_largura_alvo = pct_largura_alvo
 
-    @abstractmethod
-    def executar_alocacao(self, modulo, x_min, x_max, catalogo):
-        """Método que cada seção implementará com sua própria regra geométrica."""
-        pass
-
-
-class SecaoTorresGulosas(Secao):
-    """
-    Preenche a seção criando torres verticais de forma gulosa (greedy).
-    Pega a maior travessa daquela largura, empilha até não caber mais,
-    e então tenta a próxima maior para preencher o resto da coluna.
-    """
-
-    UI_SCHEMA = {
-        "tipo": "SecaoTorresGulosas",
-        "nome_amigavel": "Preenchimento Guloso (Rápido)",
-        "descricao": "Preenche o espaço tentando alocar as maiores travessas primeiro.",
-        "campos": [
-            {"nome": "catalogo", "tipo": "catalogo", "label": "Catálogo de Travessas"},
-            {
-                "nome": "pct_largura_alvo",
-                "tipo": "float",
-                "label": "% do Espaço Restante",
-                "default": 0.7,
-            },
-        ],
-    }
-
-    def __init__(self, nome, pct_largura_alvo=0.7, catalogo=None, **kwargs):
-        super().__init__(nome, pct_largura_alvo)
-        self.catalogo_especifico = catalogo
-
-    def buscar_torres_gulosas(self, catalogo, altura_maxima, espaco):
-        catalogo_isolado = copy.deepcopy(catalogo)
-        itens_por_largura = {}
-
-        for item in catalogo_isolado:
-            w, h = item["w"], item["h"]
-            if w not in itens_por_largura:
-                itens_por_largura[w] = []
-            itens_por_largura[w].append(item)
-
-            if item.get("rot", False) and w != h:
-                if h not in itens_por_largura:
-                    itens_por_largura[h] = []
-                itens_por_largura[h].append(
-                    {"nome": item["nome"] + " (R)", "w": h, "h": w}
-                )
-
-        torres_gulosas = []
-
-        for lw, itens_disponiveis in itens_por_largura.items():
-            itens_disponiveis = sorted(
-                itens_disponiveis, key=lambda x: x["h"], reverse=True
-            )
-
-            itens_da_torre = []
-            altura_ocupada = 0.0
-
-            # LÓGICA GULOSA:
-            # Tenta a maior peça. Se couber, repete. Se não, vai pra próxima.
-            for item in itens_disponiveis:
-                while True:
-                    espaco_extra = espaco if itens_da_torre else 0
-                    altura_projetada = altura_ocupada + espaco_extra + item["h"]
-
-                    if altura_projetada <= altura_maxima:
-                        itens_da_torre.append(item)
-                        altura_ocupada = altura_projetada
-                    else:
-                        break
-
-            if itens_da_torre:
-                torres_gulosas.append(
-                    {
-                        "largura": lw,
-                        "itens": itens_da_torre,
-                        "aproveitamento": altura_ocupada,
-                    }
-                )
-
-        torres_gulosas = sorted(
-            torres_gulosas, key=lambda x: x["aproveitamento"], reverse=True
-        )
-
-        print(f"Torres gulosas calculadas para a seção: {self.nome}")
-        return torres_gulosas
-
-    def executar_alocacao(self, modulo, x_min, x_max, catalogo):
-        cat_para_usar = (
-            self.catalogo_especifico if self.catalogo_especifico else catalogo
-        )
-
-        torres = self.buscar_torres_gulosas(
-            cat_para_usar, altura_maxima=modulo.engine.P, espaco=modulo.engine.espaco
-        )
-
-        modulo.engine.preencher_secao_com_torres(
-            torres, x_min=x_min, x_max=x_max, nome_secao=self.nome
-        )
-
-
-class SecaoMioloTorres(Secao):
-    """Encapsula a otimização vertical pura de torres de cubas"""
-
-    UI_SCHEMA = {
-        "tipo": "SecaoMioloTorres",
-        "nome_amigavel": "Otimização de Torres (Miolo)",
-        "descricao": "Calcula combinações verticais complexas para maximizar matematicamente a altura utilizada do balcão.",
-        "campos": [
-            {"nome": "catalogo", "tipo": "catalogo", "label": "Catálogo de Cubas"},
-            {
-                "nome": "pct_largura_alvo",
-                "tipo": "float",
-                "label": "% do Espaço Restante",
-                "default": 0.7,
-            },
-        ],
-    }
-
-    def __init__(self, nome, pct_largura_alvo=0.7, **kwargs):
-        super().__init__(nome, pct_largura_alvo)
-        self.catalogo_especifico = kwargs.get("catalogo", None)
-
     def buscar_melhor_combinacao_vertical(self, catalogo, altura_maxima, espaco):
         """Busca combinações verticais maximizando a altura usada."""
         catalogo_isolado = copy.deepcopy(catalogo)
@@ -206,6 +82,130 @@ class SecaoMioloTorres(Secao):
         print(melhores_torres)
         return melhores_torres
 
+    def buscar_torres_gulosas(self, catalogo, altura_maxima, espaco):
+        catalogo_isolado = copy.deepcopy(catalogo)
+        itens_por_largura = {}
+
+        for item in catalogo_isolado:
+            w, h = item["w"], item["h"]
+            if w not in itens_por_largura:
+                itens_por_largura[w] = []
+            itens_por_largura[w].append(item)
+
+            if item.get("rot", False) and w != h:
+                if h not in itens_por_largura:
+                    itens_por_largura[h] = []
+                itens_por_largura[h].append(
+                    {"nome": item["nome"] + " (R)", "w": h, "h": w}
+                )
+
+        torres_gulosas = []
+
+        for lw, itens_disponiveis in itens_por_largura.items():
+            itens_disponiveis = sorted(
+                itens_disponiveis, key=lambda x: x["h"], reverse=True
+            )
+
+            itens_da_torre = []
+            altura_ocupada = 0.0
+
+            # LÓGICA GULOSA:
+            # Tenta a maior peça. Se couber, repete. Se não, vai pra próxima.
+            for item in itens_disponiveis:
+                while True:
+                    espaco_extra = espaco if itens_da_torre else 0
+                    altura_projetada = altura_ocupada + espaco_extra + item["h"]
+
+                    if altura_projetada <= altura_maxima:
+                        itens_da_torre.append(item)
+                        altura_ocupada = altura_projetada
+                    else:
+                        break
+
+            if itens_da_torre:
+                torres_gulosas.append(
+                    {
+                        "largura": lw,
+                        "itens": itens_da_torre,
+                        "aproveitamento": altura_ocupada,
+                    }
+                )
+
+        torres_gulosas = sorted(
+            torres_gulosas, key=lambda x: x["aproveitamento"], reverse=True
+        )
+
+        print(f"Torres gulosas calculadas para a seção: {self.nome}")
+        return torres_gulosas
+
+    @abstractmethod
+    def executar_alocacao(self, modulo, x_min, x_max, catalogo):
+        """Método que cada seção implementará com sua própria regra geométrica."""
+        pass
+
+
+class SecaoTorresGulosas(Secao):
+    """
+    Preenche a seção criando torres verticais de forma gulosa (greedy).
+    Pega a maior travessa daquela largura, empilha até não caber mais,
+    e então tenta a próxima maior para preencher o resto da coluna.
+    """
+
+    UI_SCHEMA = {
+        "tipo": "SecaoTorresGulosas",
+        "nome_amigavel": "Preenchimento Guloso (Rápido)",
+        "descricao": "Preenche o espaço tentando alocar as maiores travessas primeiro.",
+        "campos": [
+            {"nome": "catalogo", "tipo": "catalogo", "label": "Catálogo de Travessas"},
+            {
+                "nome": "pct_largura_alvo",
+                "tipo": "float",
+                "label": "% do Espaço Restante",
+                "default": 0.7,
+            },
+        ],
+    }
+
+    def __init__(self, nome, pct_largura_alvo=0.7, catalogo=None, **kwargs):
+        super().__init__(nome, pct_largura_alvo)
+        self.catalogo_especifico = catalogo
+
+    def executar_alocacao(self, modulo, x_min, x_max, catalogo):
+        cat_para_usar = (
+            self.catalogo_especifico if self.catalogo_especifico else catalogo
+        )
+
+        torres = self.buscar_torres_gulosas(
+            cat_para_usar, altura_maxima=modulo.engine.P, espaco=modulo.engine.espaco
+        )
+
+        modulo.engine.preencher_secao_com_torres(
+            torres, x_min=x_min, x_max=x_max, nome_secao=self.nome
+        )
+
+
+class SecaoMioloTorres(Secao):
+    """Encapsula a otimização vertical pura de torres de cubas"""
+
+    UI_SCHEMA = {
+        "tipo": "SecaoMioloTorres",
+        "nome_amigavel": "Otimização de Torres (Miolo)",
+        "descricao": "Calcula combinações verticais complexas para maximizar matematicamente a altura utilizada do balcão.",
+        "campos": [
+            {"nome": "catalogo", "tipo": "catalogo", "label": "Catálogo de Cubas"},
+            {
+                "nome": "pct_largura_alvo",
+                "tipo": "float",
+                "label": "% do Espaço Restante",
+                "default": 0.7,
+            },
+        ],
+    }
+
+    def __init__(self, nome, pct_largura_alvo=0.7, **kwargs):
+        super().__init__(nome, pct_largura_alvo)
+        self.catalogo_especifico = kwargs.get("catalogo", None)
+
     def executar_alocacao(self, modulo, x_min, x_max, catalogo):
         if isinstance(self.catalogo_especifico, str) and isinstance(catalogo, dict):
             cat_para_usar = catalogo.get(self.catalogo_especifico, catalogo)
@@ -223,7 +223,7 @@ class SecaoMioloTorres(Secao):
         )
 
 
-class SecaoPanelasRedondasComGaps(SecaoMioloTorres):
+class SecaoPanelasRedondasComGaps(Secao):
     """Encapsula as panelas redondas e o preenchimento de gaps abaixo delas dinamicamente."""
 
     UI_SCHEMA = {
@@ -242,6 +242,20 @@ class SecaoPanelasRedondasComGaps(SecaoMioloTorres):
                 "tipo": "catalogo",
                 "label": "Catálogo para Gaps (Cubas)",
                 "default": "catalogo_gaps",
+            },
+            {
+                "tipo": "select",
+                "nome": "estrategia_gaps",
+                "label": "Estratégia de Preenchimento",
+                "default": "combinacao_eficiente",
+                "options": [
+                    {
+                        "value": "combinacao_eficiente",
+                        "label": "Combinação Vertical Eficiente",
+                    },
+                    {"value": "torres_gulosas", "label": "Torres Gulosas (Rápido)"},
+                    {"value": "itens_fixos", "label": "Sequência de Itens Fixos"},
+                ],
             },
             {
                 "nome": "qtd_panelas",
@@ -265,11 +279,13 @@ class SecaoPanelasRedondasComGaps(SecaoMioloTorres):
         catalogo_panelas=None,
         catalogo_gaps=None,
         pct_largura_alvo=0.8,
+        estrategia_gaps="combinacao_eficiente",
         **kwargs,
     ):
         self.qtd_panelas = qtd_panelas
         self.catalogo_panelas = catalogo_panelas or []
         self.catalogo_gaps = catalogo_gaps or []
+        self.estrategia_gaps = estrategia_gaps
 
         super().__init__(nome=nome, pct_largura_alvo=pct_largura_alvo, **kwargs)
 
@@ -325,22 +341,63 @@ class SecaoPanelasRedondasComGaps(SecaoMioloTorres):
 
         limite_fisico_s1 = modulo.engine.obter_limite_direito()
 
-        # CORREÇÃO: A altura restante agora depende dinamicamente de quantas linhas de panela foram usadas
         # Se usamos 2 linhas de panela, a altura ocupada é (2 * d) + espaco
         altura_ocupada_panelas = (melhor_linhas * melhor_diametro) + (
             (melhor_linhas - 1) * modulo.engine.espaco
         )
         altura_restante_s1 = modulo.engine.P - altura_ocupada_panelas
 
-        # 2. Busca a melhor combinação vertical usando apenas o catálogo de cubas injetado
-        torres_s1 = self.buscar_melhor_combinacao_vertical(
-            self.catalogo_gaps,
-            altura_maxima=altura_restante_s1,
-            espaco=modulo.engine.espaco,
+        cat_para_gaps = self.catalogo_gaps if self.catalogo_gaps else catalogo
+
+        estrategias = {
+            "combinacao_eficiente": self._preencher_combinacao_vertical,
+            "torres_gulosas": self._preencher_torres_gulosas,
+            "itens_fixos": self._preencher_itens_fixos,
+        }
+
+        funcao_estrategia = estrategias.get(
+            self.estrategia_gaps, self._preencher_combinacao_vertical
         )
 
+        funcao_estrategia(
+            modulo=modulo,
+            catalogo=cat_para_gaps,
+            altura_maxima=altura_restante_s1,
+            x_min=x_min,
+            x_max=limite_fisico_s1,
+        )
+
+    # --- Implementação das Estratégias (Isoladas e Limpas) ---
+    def _preencher_combinacao_vertical(
+        self, modulo, catalogo, altura_maxima, x_min, x_max
+    ):
+        """Estratégia 1: Combinação Combinatória Vertical Eficiente"""
+        torres = self.buscar_melhor_combinacao_vertical(
+            catalogo,
+            altura_maxima=altura_maxima,
+            espaco=modulo.engine.espaco,
+        )
         modulo.engine.preencher_secao_com_torres(
-            torres_s1, x_min=x_min, x_max=limite_fisico_s1, nome_secao=self.nome
+            torres, x_min=x_min, x_max=x_max, nome_secao=self.nome
+        )
+
+    def _preencher_torres_gulosas(self, modulo, catalogo, altura_maxima, x_min, x_max):
+        """Estratégia 2: Algoritmo Guloso (Greedy Towers) respeitando o limite restrito"""
+        torres = self.buscar_torres_gulosas(
+            catalogo, altura_maxima=altura_maxima, espaco=modulo.engine.espaco
+        )
+        modulo.engine.preencher_secao_com_torres(
+            torres, x_min=x_min, x_max=x_max, nome_secao=self.nome
+        )
+
+    def _preencher_itens_fixos(self, modulo, catalogo, altura_maxima, x_min, x_max):
+        """Estratégia 3: Alocação sequencial linear de itens pré-definidos"""
+        modulo.engine.preencher_secao(
+            catalogo,
+            x_min=x_min,
+            x_max=x_max,
+            nome_secao=self.nome,
+            altura_limite=altura_maxima,
         )
 
     def alocar_panelas_redondas_inteligente(self, engine, qtd_desejada, x_min, x_max):

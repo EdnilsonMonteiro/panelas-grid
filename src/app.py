@@ -2,9 +2,9 @@ import io
 import json
 import logging
 import os
-import zipfile
+import tempfile
 
-from flask import Flask, after_this_request, jsonify, request, send_file
+from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
 
 from database.database import inicializar_banco, obter_conexao
@@ -17,6 +17,9 @@ from secoes import (
     SecaoPanelasRedondasComGaps,
     SecaoTorresGulosas,
 )
+
+DIRETORIO_TEMPORARIO = os.path.join(tempfile.gettempdir(), "layout_engine_outputs")
+os.makedirs(DIRETORIO_TEMPORARIO, exist_ok=True)
 
 inicializar_banco()
 
@@ -88,7 +91,14 @@ def construir_pipeline_desde_json(json_config, pedido):
 
         for chave, valor in params.items():
             if "catalogo" in chave:
-                lista_cuba = carregar_catalogo_por_nome(valor)
+                if isinstance(valor, str):
+                    lista_cuba = carregar_catalogo_por_nome(valor)
+
+                elif isinstance(valor, list):
+                    lista_cuba = valor
+                else:
+                    lista_cuba = []
+
                 kwargs_init[chave] = lista_cuba
 
                 if chave == "catalogo":
@@ -215,8 +225,7 @@ def obter_schemas_secoes():
 
 @app.route("/api/processar", methods=["POST"])
 def processar_pipeline():
-    """Recebe a estrutura de montagem e retorna o arquivo de resposta gerado."""
-    arquivos_locais_para_limpar = []
+    """Recebe a estrutura de montagem, gera os arquivos no diretório temporário e retorna o PDF."""
     try:
         dados_recebidos = request.json
         if not dados_recebidos:
@@ -227,11 +236,10 @@ def processar_pipeline():
             nome_cliente_ui = "Cliente Não Informado"
 
         pedido = PedidoCliente(nome_cliente=nome_cliente_ui)
-
         pedido_processado = construir_pipeline_desde_json(dados_recebidos, pedido)
 
+        # Gerar o slug do nome do cliente
         nome_slug = nome_cliente_ui.replace(" ", "_").lower()
-
         import unicodedata
 
         nome_slug = "".join(
@@ -240,60 +248,49 @@ def processar_pipeline():
             if unicodedata.category(c) != "Mn"
         )
 
-        caminho_pdf = os.path.join(DIRETORIO_ATUAL, f"layout_{nome_slug}.pdf")
-        caminho_pptx = os.path.join(DIRETORIO_ATUAL, f"layout_{nome_slug}.pptx")
+        # 💡 Salvamos os arquivos no DIRETORIO_TEMPORARIO para que o PPTX persista até o download
+        caminho_pdf = os.path.join(DIRETORIO_TEMPORARIO, f"layout_{nome_slug}.pdf")
+        caminho_pptx = os.path.join(DIRETORIO_TEMPORARIO, f"layout_{nome_slug}.pptx")
 
-        arquivos_locais_para_limpar.extend([caminho_pdf, caminho_pptx])
-
+        # Gera ambos os formatos em um único processamento
         ExportadorPDF.gerar_layout(pedido_processado, caminho_pdf)
         ExportadorPPTX.gerar_layout(pedido_processado, caminho_pptx)
 
-        memoria_zip = io.BytesIO()
+        # Lê o PDF para enviar na resposta de visualização imediata
+        with open(caminho_pdf, "rb") as f:
+            dados_pdf = io.BytesIO(f.read())
 
-        with zipfile.ZipFile(memoria_zip, "w", zipfile.ZIP_DEFLATED) as zipf:
-            if os.path.exists(caminho_pdf):
-                zipf.write(caminho_pdf, arcname=f"layout_{nome_slug}.pdf")
-            if os.path.exists(caminho_pptx):
-                zipf.write(caminho_pptx, arcname=f"layout_{nome_slug}.pptx")
-
-        memoria_zip.seek(0)
-
-        for arquivo in arquivos_locais_para_limpar:
-            try:
-                if os.path.exists(arquivo):
-                    os.remove(arquivo)
-                    print(f" > Temporário removido do disco: {arquivo}")
-            except Exception as error:
-                print(f"Erro na remoção imediata de {arquivo}: {error}")
-
-        # --- EVENTO DE LIMPEZA EM SEGUNDO PLANO ---
-        @after_this_request
-        def limpar_residuos_restantes(response):
-            for arquivo in arquivos_locais_para_limpar:
-                if os.path.exists(arquivo):
-                    try:
-                        os.remove(arquivo)
-                    except OSError as e:
-                        logging.error(f"Erro ao remover o arquivo {arquivo}: {e}")
-            return response
-
-        # ------------------------------------------
-
+        dados_pdf.seek(0)
         return send_file(
-            memoria_zip,
-            mimetype="application/zip",
-            as_attachment=True,
-            download_name=f"arquivos_layout_{nome_slug}.zip",
+            dados_pdf,
+            mimetype="application/pdf",
+            as_attachment=False,
+            download_name=f"layout_{nome_slug}.pdf",
         )
 
     except Exception as e:
-        for arquivo in arquivos_locais_para_limpar:
-            if os.path.exists(arquivo):
-                try:
-                    os.remove(arquivo)
-                except OSError as e:
-                    logging.error(f"Erro ao remover o arquivo {arquivo}: {e}")
+        logging.error(f"Erro no processamento: {e}")
         return jsonify({"erro": str(e)}), 500
+
+
+@app.route("/api/download-pptx/<nome_slug>", methods=["GET"])
+def baixar_pptx(nome_slug):
+    """Apenas recupera o arquivo PPTX já gerado anteriormente, sem processar o motor geométrico novamente."""
+    caminho_pptx = os.path.join(DIRETORIO_TEMPORARIO, f"layout_{nome_slug}.pptx")
+
+    if not os.path.exists(caminho_pptx):
+        return jsonify(
+            {
+                "erro": "O arquivo PPTX correspondente expirou ou não foi gerado. Processe o layout novamente."
+            }
+        ), 404
+
+    return send_file(
+        caminho_pptx,
+        mimetype="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        as_attachment=True,
+        download_name=f"layout_{nome_slug}.pptx",
+    )
 
 
 @app.route("/api/templates", methods=["GET"])
