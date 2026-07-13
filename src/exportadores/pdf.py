@@ -16,32 +16,46 @@ print(f" > Buscando assets em: {PASTA_ASSETS}")
 class ExportadorPDF:
     @staticmethod
     def gerar_layout(pedido, nome_arquivo):
-        c = canvas.Canvas(nome_arquivo, pagesize=landscape(A4))
-        w_page, h_page = landscape(A4)
         ESCALA = 0.1  # Escala 1:10
+
+        # --- 1. CÁLCULO DA LARGURA DINÂMICA DA PÁGINA ---
+        # Encontra o maior comprimento (L) entre os módulos do pedido
+        maior_comprimento_balcao_cm = max(modulo.engine.L for modulo in pedido.modulos)
+        largura_balcao_no_pdf = maior_comprimento_balcao_cm * cm * ESCALA
+
+        # Define uma folga de segurança de 20cm reais no PDF (10cm de cada lado para as cotas e respiro)
+        largura_calculada_pdf = largura_balcao_no_pdf + (20.0 * cm)
+
+        # Resgata as dimensões padrão do A4 em modo paisagem para referência mínima
+        w_a4_landscape, h_a4_landscape = landscape(A4)
+
+        # Garante que a página tenha no mínimo o tamanho de um A4 de largura
+        w_page = max(largura_calculada_pdf, w_a4_landscape)
+        h_page = h_a4_landscape  # Mantém a altura padrão estável
+
+        # Inicializa o canvas com o tamanho de página dinâmico
+        c = canvas.Canvas(nome_arquivo, pagesize=(w_page, h_page))
 
         topo_atual_y = h_page - 1.0 * cm
 
-        # --- 1. LOGO DA EMPRESA ---
+        # --- 2. LOGO DA EMPRESA ---
         caminho_logo = os.path.join(PASTA_ASSETS, "logo.png")
         altura_logo = 2.2 * cm
         if os.path.exists(caminho_logo):
-            # Desenha a logo centralizada no topo para abrir espaço limpo nas laterais
+            # Desenha a logo centralizada no topo baseado na nova largura dinâmica
             c.drawImage(
                 caminho_logo,
-                (w_page - 6.0 * cm)
-                / 2,  # Centraliza a logo horizontalmente (largura estimada de 6cm)
+                (w_page - 6.0 * cm) / 2,  # Centraliza usando a nova largura total
                 topo_atual_y - altura_logo,
                 height=altura_logo,
                 preserveAspectRatio=True,
                 mask="auto",
             )
-            # Consome o espaço ocupado pela logo + margem de respiro
             topo_atual_y -= altura_logo + 0.5 * cm
         else:
             topo_atual_y -= 0.5 * cm
 
-        # --- 2. INFORMAÇÕES DE CONTATO E ASSINATURA ---
+        # --- 3. INFORMAÇÕES DE CONTATO E ASSINATURA ---
         c.setFont("Helvetica-Bold", 10)
         c.drawString(
             1.5 * cm,
@@ -57,21 +71,18 @@ class ExportadorPDF:
         )
         topo_atual_y -= 0.3 * cm
 
-        # Linha divisória fina de separação de contexto
+        # Linha divisória estendendo-se por toda a nova largura da página (com margem de 1.5cm)
         c.setStrokeColor(lightgrey)
         c.setLineWidth(1)
         c.line(1.5 * cm, topo_atual_y, w_page - 1.5 * cm, topo_atual_y)
         topo_atual_y -= 0.6 * cm
 
-        # --- 3. DADOS DO CLIENTE ---
+        # --- 4. DADOS DO CLIENTE ---
         c.setFont("Helvetica-Bold", 12)
         c.drawString(1.5 * cm, topo_atual_y, f"Cliente: {pedido.nome_cliente}")
-
-        # Recuo de segurança pós-cliente: garante que o bloco do título fique LOGO ABAIXO dele
         topo_atual_y -= 1.2 * cm
 
-        # --- 4. BLOCO CENTRALIZADO HORIZONTALMENTE: OPÇÃO 1 ---
-        # Como o ponteiro fluiu livre até aqui, este bloco nunca vai colidir com o cabeçalho superior
+        # --- 5. BLOCO CENTRALIZADO DINAMICAMENTE: OPÇÃO 1 ---
         c.setFont("Helvetica-Bold", 24)
         c.drawCentredString(w_page / 2, topo_atual_y, "Opção 1")
         topo_atual_y -= 0.8 * cm
@@ -80,24 +91,23 @@ class ExportadorPDF:
         c.drawCentredString(w_page / 2, topo_atual_y, "Self-Service Quente")
         topo_atual_y -= 0.4 * cm
 
-        # Linha sólida do título centralizado
+        # Linha sólida do título centralizada na nova página
         c.setStrokeColor(black)
         c.setLineWidth(1.5)
         c.line(w_page / 2 - 5 * cm, topo_atual_y, w_page / 2 + 5 * cm, topo_atual_y)
-
-        # Espaço de folga entre o título e o início do desenho do balcão
         topo_atual_y -= 0.8 * cm
 
-        # --- 5. DESENHO DO BALCÃO E SEUS COMPONENTES ---
-        # O offset_y agora aproveita o espaço restante calculado dinamicamente ou fica fixo na base
+        # --- 6. DESENHO DO BALCÃO E SEUS COMPONENTES ---
         offset_y = 2.0 * cm
 
         for modulo in pedido.modulos:
             largura_real = modulo.engine.L * cm * ESCALA
             altura_real = modulo.engine.P * cm * ESCALA
+
+            # Recalcula o offset_x dinamicamente para o centro da nova página expandida
             offset_x = (w_page - largura_real) / 2
 
-            # --- 5.1. FUNDO DO BALCÃO ---
+            # --- 6.1. FUNDO DO BALCÃO ---
             caminho_fundo = os.path.join(PASTA_ASSETS, "fundo_perfurado.png")
             if os.path.exists(caminho_fundo):
                 c.drawImage(
@@ -113,7 +123,7 @@ class ExportadorPDF:
                 c.setStrokeColor(black)
                 c.rect(offset_x, offset_y, largura_real, altura_real, fill=1, stroke=1)
 
-            # --- 5.2. ALOCAÇÃO DAS PANELAS E PEÇAS ---
+            # --- 6.2. ALOCAÇÃO DAS PANELAS E PEÇAS ---
             for item in modulo.engine.itens:
                 w_dim = item["w"] * cm * ESCALA
                 h_dim = item["h"] * cm * ESCALA
@@ -179,9 +189,9 @@ class ExportadorPDF:
                     texto_panela,
                 )
 
-            # --- 6. RÉGUAS METRICAS (COTAS) ---
+            # --- 7. RÉGUAS MÉTRICAS (COTAS) ---
 
-            # 6.1. Régua de Largura (Horizontal Inferior)
+            # 7.1. Régua de Largura (Horizontal Inferior)
             chave_y = offset_y - 1.0 * cm
             c.setStrokeColor(black)
             c.setLineWidth(1.5)
@@ -200,7 +210,7 @@ class ExportadorPDF:
                 f"{modulo.engine.L}cm",
             )
 
-            # 6.2. Régua de Profundidade (Vertical Direita)
+            # 7.2. Régua de Profundidade (Vertical Direita)
             chave_x = offset_x + largura_real + 0.5 * cm
             c.setStrokeColor(black)
             c.setLineWidth(1.5)
@@ -221,6 +231,4 @@ class ExportadorPDF:
             c.restoreState()
 
         c.save()
-        print(
-            f" > PDF gerado com sucesso com fluxo dinâmico anti-colisão: '{nome_arquivo}'"
-        )
+        print(f" > PDF gerado com sucesso com dimensões adaptativas: '{nome_arquivo}'")

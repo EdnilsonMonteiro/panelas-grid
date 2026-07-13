@@ -21,8 +21,21 @@ class ExportadorPPTX:
     @staticmethod
     def gerar_layout(pedido, nome_arquivo):
         prs = Presentation()
-        prs.slide_width = Cm(40)
-        prs.slide_height = Cm(22.5)  # Proporção Widescreen 16:9
+
+        # --- DEFINIÇÃO DA ESCALA (1:10) ---
+        ESCALA = 0.1
+
+        # --- CALCULAR LARGURA DINÂMICA DO SLIDE ---
+        # Encontra o maior comprimento (L) entre os módulos para basear o tamanho do slide
+        maior_comprimento_balcao_cm = max(modulo.engine.L for modulo in pedido.modulos)
+        largura_balcao_no_slide = maior_comprimento_balcao_cm * ESCALA
+
+        # Adiciona uma margem de segurança de 20cm (10cm de cada lado para as cotas/textos)
+        largura_calculada_slide = Cm(largura_balcao_no_slide + 20.0)
+
+        # Garante que o slide tenha no mínimo 40cm para manter a consistência estética em balcões pequenos
+        prs.slide_width = max(largura_calculada_slide, Cm(40))
+        prs.slide_height = Cm(22.5)  # Mantém a proporção vertical Widescreen estável
 
         slide = prs.slides.add_slide(prs.slide_layouts[6])
 
@@ -59,8 +72,9 @@ class ExportadorPPTX:
         p_cliente.font.bold = True
         p_cliente.font.size = Pt(12)
 
-        # Título Centralizado
-        tx_titulo = slide.shapes.add_textbox(Cm(10), Cm(1.5), Cm(20), Cm(2))
+        # Título Centralizado dinamicamente em relação à nova largura do slide
+        posicao_x_titulo = (prs.slide_width - Cm(20)) / 2
+        tx_titulo = slide.shapes.add_textbox(posicao_x_titulo, Cm(1.5), Cm(20), Cm(2))
         tf_titulo = tx_titulo.text_frame
         tf_titulo.text = "Opção 1\nSelf-Service Quente"
         tf_titulo.paragraphs[0].alignment = PP_ALIGN.CENTER
@@ -74,14 +88,11 @@ class ExportadorPPTX:
             tf_titulo.paragraphs[1].font.underline = True
             tf_titulo.paragraphs[1].font.italic = True
 
-        # --- 2. DEFINIÇÃO DA ESCALA (1:10) ---
-        ESCALA = 0.1
-
         for modulo in pedido.modulos:
             largura_real = Cm(modulo.engine.L * ESCALA)
             altura_real = Cm(modulo.engine.P * ESCALA)
 
-            # Centralização dinâmica baseada na escala do slide inteiro
+            # Centralização dinâmica baseada na nova escala responsiva do slide
             offset_x = (prs.slide_width - largura_real) / 2
             offset_y = Cm(7)
 
