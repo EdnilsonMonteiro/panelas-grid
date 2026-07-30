@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 from pptx import Presentation
 from pptx.dml.color import RGBColor
@@ -9,10 +10,13 @@ from pptx.util import Cm, Pt
 # ─────────────────────────────────────────────────────
 # LOGIC DE DIRETÓRIOS DINÂMICOS
 # ─────────────────────────────────────────────────────
-DIRETORIO_EXPORTADOR = os.path.dirname(os.path.abspath(__file__))
-PASTA_SRC = os.path.abspath(os.path.join(DIRETORIO_EXPORTADOR, ".."))
-PASTA_RAIZ_PROJETO = os.path.abspath(os.path.join(PASTA_SRC, ".."))
-PASTA_ASSETS = os.path.join(PASTA_RAIZ_PROJETO, "assets")
+ARQUIVO_ATUAL = Path(__file__).resolve()
+
+PASTA_RAIZ_PROJETO = next(
+    p for p in ARQUIVO_ATUAL.parents if (p / "assets").exists() or (p / "src").exists()
+)
+
+PASTA_ASSETS = PASTA_RAIZ_PROJETO / "assets"
 
 print(f" > Buscando assets em: {PASTA_ASSETS}")
 

@@ -4,6 +4,7 @@ resultado_*
 catalogos/*
 .~lock*
 __pycache__
+assets/glb/*
 
 dados.db
 popular_catalogos.py

@@ -6,8 +6,15 @@ CAMINHO_BANCO = os.path.join(DIRETORIO_ATUAL, "dados.db")
 
 
 def obter_conexao():
-    """Retorna uma conexão com o banco de dados que mapeia linhas como dicionários."""
-    conn = sqlite3.connect(CAMINHO_BANCO)
+    """Retorna uma conexão com o banco de dados que mapeia linhas como dicionários.
+
+    `check_same_thread=False` é necessário porque o FastAPI executa endpoints
+    síncronos (def) e dependências (Depends) em um pool de threads: a conexão
+    pode ser aberta em um thread e usada/fechada em outro. É seguro porque cada
+    requisição possui sua própria conexão — o uso entre threads é sequencial,
+    nunca concorrente sobre o mesmo objeto de conexão.
+    """
+    conn = sqlite3.connect(CAMINHO_BANCO, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
 
