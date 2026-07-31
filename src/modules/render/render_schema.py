@@ -1,6 +1,6 @@
 """Contratos da renderização 3D server-side (Blender Eevee, modelo stateless)."""
 
-from typing import List
+from typing import List, Optional
 
 from modules.pipeline.pipeline_schema import ItemLayout
 from pydantic import BaseModel, Field
@@ -18,6 +18,8 @@ class Render3DRequest(BaseModel):
     profundidade_balcao_cm: float = Field(gt=0)
     altura_balcao_cm: float = Field(default=90.0, gt=0)
     itens: List[ItemLayout] = Field(min_length=1)
+    exibir_cotas: bool = Field(default=False)
+    modulos_balcao_cm: Optional[List[float]] = Field(default=None)
 
 
 class Render3DStatusResponse(BaseModel):

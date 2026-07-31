@@ -1,4 +1,4 @@
-layout_*
+﻿layout_*
 layouts_*
 resultado_*
 catalogos/*
@@ -12,3 +12,6 @@ popular_catalogos.py
 # VS Code
 .vscode/*
 .env
+# Debug temporario da cena 3D
+assets/*.blend*
+assets/textures/*

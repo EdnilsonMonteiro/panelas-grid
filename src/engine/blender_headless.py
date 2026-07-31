@@ -101,12 +101,18 @@ def montar_job_render(
     resolucao=(1280, 960),
     amostras=64,
     angulo_camera_graus=75.0,
+    exibir_cotas=False,
+    modulos_balcao_cm=None,
 ):
     """Converte os itens do motor geométrico (cm, canto superior-esquerdo) no
     JSON de renderização (metros, centro da peça, Z sobre o tampo do balcão).
 
     `alturas_itens_cm` permite customizar a altura 3D das peças por formato:
     {"circulo": 20.0, "retangulo": 15.0}.
+
+    `exibir_cotas` liga o overlay de cotas dimensionais; `modulos_balcao_cm`
+    lista as divisões internas do balcão (ex: [120, 51, 61]) para as cotas
+    de módulos.
     """
     glb_dir = os.path.abspath(glb_dir or DIRETORIO_GLB_PADRAO)
     template_path = os.path.abspath(template_path or CAMINHO_TEMPLATE_PADRAO)
@@ -117,6 +123,7 @@ def montar_job_render(
     z_tampo_m = round(altura_balcao_cm / 100.0, 4)
 
     ARQUIVO_BASE_RETANGULAR = "cuba_meio.glb"
+    ARQUIVO_BASE_CIRCULAR = "panela_30.glb"
     itens_3d = []
     for item in itens_layout:
         formato = item.get("formato", "retangulo")
@@ -129,7 +136,12 @@ def montar_job_render(
         elif formato == "retangulo" and os.path.exists(
             os.path.join(glb_dir, ARQUIVO_BASE_RETANGULAR)
         ):
+            print(f"DEGUG - Item {slug} está com base retangular")
             glb = ARQUIVO_BASE_RETANGULAR
+        elif formato == "circulo" and os.path.exists(
+            os.path.join(glb_dir, ARQUIVO_BASE_CIRCULAR)
+        ):
+            glb = ARQUIVO_BASE_CIRCULAR
 
         itens_3d.append(
             {
@@ -159,7 +171,12 @@ def montar_job_render(
         },
         "camera": {
             "angulo_elevacao_graus": float(angulo_camera_graus),
-            "fator_margem": 1.3,
+            # Cotas projetam ~0,4 m além das faces do balcão: margem extra
+            "fator_margem": 1.45 if exibir_cotas else 1.3,
+        },
+        "cotas": {
+            "exibir": bool(exibir_cotas),
+            "modulos_m": [round(m / 100.0, 4) for m in (modulos_balcao_cm or [])],
         },
         "render": {
             "motor": "BLENDER_EEVEE_NEXT",
@@ -234,6 +251,13 @@ def renderizar_cena_3d(job, timeout_segundos=300):
             ) from exc
 
         log_completo = f"{resultado.stdout}\n{resultado.stderr}".strip()
+
+        print("\n--- [LOG DO BLENDER INÍCIO] ---")
+        for linha in log_completo.splitlines():
+            # Filtra ruídos internos do Blender e exibe os prints do seu script (iniciados com '>')
+            if linha.strip().startswith(">") or "Error" in linha or "Warning" in linha:
+                print(f"  {linha.strip()}")
+        print("--- [LOG DO BLENDER FIM] ---\n")
         if resultado.returncode != 0:
             raise FalhaRenderizacaoBlenderError(
                 f"Blender finalizou com código {resultado.returncode}.\n"

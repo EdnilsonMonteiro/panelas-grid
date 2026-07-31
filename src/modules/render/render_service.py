@@ -61,5 +61,7 @@ def renderizar_png(dados: Render3DRequest) -> str:
         profundidade_balcao_cm=dados.profundidade_balcao_cm,
         caminho_saida_png=caminho_png,
         altura_balcao_cm=dados.altura_balcao_cm,
+        exibir_cotas=dados.exibir_cotas,
+        modulos_balcao_cm=dados.modulos_balcao_cm,
     )
     return renderizar_cena_3d(job)
