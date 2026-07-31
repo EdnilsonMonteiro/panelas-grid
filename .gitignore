@@ -15,3 +15,4 @@ popular_catalogos.py
 # Debug temporario da cena 3D
 assets/*.blend*
 assets/textures/*
+assets/templates/*

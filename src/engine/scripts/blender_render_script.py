@@ -82,12 +82,15 @@ PASTA_TEXTURAS = os.path.join(RAIZ_PROJETO, "assets", "textures")
 FATOR_BOCA_COMIDA = 0.88
 
 # Preenchimento em grade: tamanho alvo de cada célula da grade (garante
-# grades >= 2x2 nas cubas de 21 cm), variação de escala por cópia (cobertura
-# acumulada de 98% a 102% da abertura útil) e overlap entre células vizinhas
-# para eliminar frestas vazias entre os blocos.
+# grades >= 2x2 nas cubas de 21 cm), variação de escala por cópia, overlap
+# agressivo entre células (1.40: cobre o "vale" do perfil morro dos assets,
+# medido em ~10-20% da bbox por borda) e jitter vertical por cópia (8 mm:
+# quebra o vale coplanar e dá relevo natural). Env vars COMIDA_TRANSBORDO /
+# COMIDA_JITTER_Z / COMIDA_SEED permitem experimentos A/B sem editar código.
 CELULA_COMIDA_M = 0.10
 VARIACAO_ESCALA_COMIDA = 0.02
-FATOR_TRANSBORDO_CELULA = 1.10
+FATOR_TRANSBORDO_CELULA = float(os.environ.get("COMIDA_TRANSBORDO", "1.40"))
+JITTER_Z_COMIDA_M = float(os.environ.get("COMIDA_JITTER_Z", "0.008"))
 
 PALETA_PADRAO = [
     (0.62, 0.35, 0.17),  # terracota
@@ -738,8 +741,10 @@ def posicionar_comida(item, caminho_comida, z_tampo):
 
     - Retângulo: grade N x M densa (células ~10 cm, mínimo 2x2), escala por
       eixo preenchendo cada célula (eixos trocados nas rotações de 90/270°,
-      sem cisalhamento), rotação Z aleatória e variação de escala ±5%.
-    - Círculo: peça única centralizada, dimensionada a ~88% da abertura.
+      sem cisalhamento), rotação Z aleatória, variação de escala ±2%,
+      overlap 1.40 e jitter Z de 8 mm.
+    - Círculo: peça única centralizada, dimensionada a ~88% da abertura, com
+      as quinas aparadas na borda circular (Boolean INTERSECT).
     A comida assenta sobre o fundo interno medido do recipiente (cavidade),
     ficando logo abaixo da borda superior."""
     print(f" > Comida para '{item['nome']}': {os.path.basename(caminho_comida)}")
@@ -808,6 +813,8 @@ def posicionar_comida(item, caminho_comida, z_tampo):
                 1.0 - VARIACAO_ESCALA_COMIDA, 1.0 + VARIACAO_ESCALA_COMIDA
             )
             fator *= FATOR_TRANSBORDO_CELULA  # folhas transbordam a célula
+            # Jitter Z: quebra o vale coplanar entre instâncias vizinhas
+            jitter_z = random.uniform(0.0, JITTER_Z_COMIDA_M)
             # Escala por eixo preenchendo a célula; nas rotações de 90/270°
             # os eixos do modelo trocam (R @ S: escala local, depois gira)
             if rotacao in (90.0, 270.0):
@@ -820,7 +827,11 @@ def posicionar_comida(item, caminho_comida, z_tampo):
                 alvos,
                 item["nome"],
                 f"{i}_{j}",
-                posicao=(item["x"] + offset_x, item["y"] + offset_y, z_base),
+                posicao=(
+                    item["x"] + offset_x,
+                    item["y"] + offset_y,
+                    z_base + jitter_z,
+                ),
                 rotacao_z_graus=rotacao,
                 escala=(
                     escala_local_x * fator,
@@ -1070,6 +1081,9 @@ def main():
     camera = configurar_camera(job.get("camera", {}), job["balcao"])
 
     comidas_dir = os.path.join(glb_dir, SUBPASTA_COMIDAS) if glb_dir else None
+    seed_comidas = os.environ.get("COMIDA_SEED")
+    if seed_comidas is not None:
+        random.seed(int(seed_comidas))  # seed fixa para experimentos A/B
     deck_comidas = FoodDeckManager(comidas_dir)
     posicionar_itens(job.get("itens", []), glb_dir, z_tampo, deck_comidas)
 
