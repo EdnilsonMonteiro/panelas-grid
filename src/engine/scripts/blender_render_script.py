@@ -120,6 +120,14 @@ VARIACAO_ESCALA_COMIDA = 0.02
 FATOR_TRANSBORDO_CELULA = float(os.environ.get("COMIDA_TRANSBORDO", "1.40"))
 JITTER_Z_MIN_COMIDA_M = 0.002
 JITTER_Z_MAX_COMIDA_M = float(os.environ.get("COMIDA_JITTER_Z", "0.005"))
+# Anti-folga em recipientes circulares: over-scaling intencional no plano XY
+# antes do aparo radial. O alimento ultrapassa a parede interna da panela e o
+# corte (bmesh, raio = borda interna) elimina frestas/lacunas nas bordas.
+# Calibrado em 1.12 (+12%) por medição de cobertura render top-down: garante
+# paridade entre arroz/feijao/macarrao (total escuro 0.9-2.2%); 1.05-1.08
+# deixa o arroz com folgas visíveis (~12% do anel). Env COMIDA_EXPANSAO_CIRCULAR
+# permite A/B sem editar código.
+FATOR_EXPANSAO_CIRCULAR = float(os.environ.get("COMIDA_EXPANSAO_CIRCULAR", "1.12"))
 
 PALETA_PADRAO = [
     (0.62, 0.35, 0.17),  # terracota
@@ -1235,12 +1243,15 @@ def _coletar_malhas(raizes):
 
 def _aparar_via_bmesh(raizes, item, circular=False):
     """Apara o que vaza das bordas do recipiente removendo os VÉRTICES
-    (bmesh) fora da boca útil (88% da abertura): toda face com um vértice
-    fora é eliminada, garantindo spill zero e borda limpa (entalhes de
-    ~2-4 mm, escondidos pela parede do recipiente).
+    (bmesh) fora da área útil: toda face com um vértice fora é eliminada,
+    garantindo spill zero e borda limpa.
 
-    - Retangular: vértices com |dx| > meia_x OU |dy| > meia_y.
-    - Circular: vértices além do raio da abertura (distância radial em XY).
+    - Retangular: vértices com |dx| > meia_x OU |dy| > meia_y (boca útil 88%).
+    - Circular: vértices além do RAIO INTERNO da panela (distância radial em
+      XY). O raio usado é metade da abertura útil (0,44 x largura), que
+      coincide com a borda interna do panela_30.glb (medida ~0,436-0,447 x
+      largura). Como a comida foi over-scaled em XY antes do corte, o aparo
+      apenas recorta o excesso já encostado na parede interna — sem frestas.
 
     Não usa Boolean (malhas do Tripo são não-manifold, o solver as esvazia
     e o corte custa segundos por peça) nem bake (preserva as normais
@@ -1299,8 +1310,9 @@ def posicionar_comida(item, caminho_comida, z_tampo):
       1.40 e jitter Z simétrico ±2-5 mm (anti-tiling). O que vaza das bordas
       retangulares é aparado removendo as faces fora da boca útil (bmesh,
       sem Boolean).
-    - Círculo: peça única centralizada, dimensionada a ~88% da abertura, com
-      as quinas aparadas na borda circular (bmesh por raio, sem Boolean).
+    - Círculo: peça única centralizada, com over-scaling intencional de ~12%
+      no plano XY antes do aparo radial na borda interna da panela (bmesh
+      por raio, sem Boolean), garantindo cobertura total sem frestas.
     A comida assenta sobre o fundo interno medido do recipiente (cavidade),
     ficando logo abaixo da borda superior.
     O .glb da comida é importado e normalizado uma única vez (cache) e clonado
@@ -1316,6 +1328,10 @@ def posicionar_comida(item, caminho_comida, z_tampo):
 
     if item.get("formato") == "circulo":
         alvos = _duplicar_hierarquia(tops)
+        # Anti-folga: over-scaling intencional no plano XY antes do aparo
+        # radial — a malha ultrapassa a parede interna da panela e o corte
+        # (raio = abertura útil = borda interna) garante cobertura total.
+        # O eixo Z mantém a proporção de altura (não expande em Z).
         _montar_instancia_comida(
             alvos,
             item["nome"],
@@ -1323,12 +1339,15 @@ def posicionar_comida(item, caminho_comida, z_tampo):
             posicao=(item["x"], item["y"], z_base),
             rotacao_z_graus=0.0,
             escala=(
-                abertura_x / dim_x,
-                abertura_y / dim_y,
+                (abertura_x / dim_x) * FATOR_EXPANSAO_CIRCULAR,
+                (abertura_y / dim_y) * FATOR_EXPANSAO_CIRCULAR,
                 abertura_x / dim_x,
             ),
         )
-        # Apara as quinas da comida na borda circular (bmesh, sem Boolean)
+        # Apara o excesso na borda circular interna (bmesh por raio, sem
+        # Boolean). A malha foi centralizada na origem pelo cache antes da
+        # expansão e a instância é ancorada em (item.x, item.y): o corte fica
+        # rigorosamente simétrico ao centro da panela.
         _aparar_via_bmesh(alvos, item, circular=True)
         return
 
