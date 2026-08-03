@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import unicodedata
 
 DIRETORIO_ENGINE = os.path.dirname(os.path.abspath(__file__))
@@ -32,6 +33,7 @@ CAMINHO_TEMPLATE_PADRAO = os.path.join(
 DIRETORIO_GLB_PADRAO = os.path.join(RAIZ_PROJETO, "assets", "glb")
 
 MARCADOR_SUCESSO = "[RENDER_3D_OK]"
+MARCADOR_METRICAS = "[RENDER_METRICS_JSON]"
 
 
 class BlenderNaoEncontradoError(RuntimeError):
@@ -191,8 +193,60 @@ def montar_job_render(
 # ---------------------------------------------------------------------------
 # Execução headless
 # ---------------------------------------------------------------------------
-def renderizar_cena_3d(job, timeout_segundos=300):
+def extrair_metricas_blender(stdout):
+    """Localiza a linha com o JSON de métricas do script do Blender no stdout.
+
+    Quando ENABLE_RENDER_METRICS está ativo, o script imprime:
+        [RENDER_METRICS_JSON] {"blender_version": ..., "init_sec": ..., ...}
+    Retorna o dict ou None se o marcador não estiver presente.
+    """
+    for linha in stdout.splitlines():
+        texto = linha.strip()
+        if texto.startswith(MARCADOR_METRICAS):
+            try:
+                return json.loads(texto[len(MARCADOR_METRICAS):])
+            except json.JSONDecodeError:
+                return None
+    return None
+
+
+def _imprimir_log_metricas(coletor_metricas):
+    """Imprime no console um resumo formatado das métricas coletadas."""
+    interno = (coletor_metricas or {}).get("blender_interno") or {}
+    print("\n--- [MÉTRICAS DE RENDER] ---")
+    print(
+        f"  json_build_sec:          "
+        f"{coletor_metricas.get('json_build_sec', 0.0):.4f}"
+    )
+    total_sub = coletor_metricas.get("subprocess_total_sec")
+    if total_sub is not None:
+        print(f"  subprocess_total_sec:    {total_sub:.4f}")
+    overhead = coletor_metricas.get("subprocess_overhead_sec")
+    if overhead is not None:
+        print(f"  subprocess_overhead_sec: {overhead:.4f}")
+    else:
+        print("  subprocess_overhead_sec: N/D")
+    for chave, valor in interno.items():
+        if chave.endswith("_sec"):
+            print(f"  blender.{chave}: {valor:.4f}s")
+        elif chave in ("peak_memory_mb", "cpu_percent"):
+            print(f"  blender.{chave}: {valor}")
+        else:
+            print(f"  blender.{chave}: {valor}")
+    print("--- [FIM MÉTRICAS] ---")
+
+
+def renderizar_cena_3d(job, timeout_segundos=300, coletor_metricas=None):
     """Executa `blender -b -P <script> -- <job.json>` e retorna o PNG gerado.
+
+    Quando `coletor_metricas` é um dict (ENABLE_RENDER_METRICS ativo), ele é
+    preenchido in-place com as métricas do pipeline FastAPI:
+        json_build_sec            -> tempo de gravação do render_job_*.json
+        subprocess_total_sec      -> duração total do processo Blender
+        subprocess_overhead_sec   -> spawn + carga de DLLs + teardown
+        blender_interno           -> JSON de fases reportado pelo script Blender
+    A flag ENABLE_RENDER_METRICS é repassada ao processo filho via
+    `env=os.environ` (herança), ligando o profiler interno do script.
 
     Levanta:
         BlenderNaoEncontradoError: executável do Blender indisponível.
@@ -213,8 +267,13 @@ def renderizar_cena_3d(job, timeout_segundos=300):
         mode="w", suffix=".json", prefix="render_job_", delete=False, encoding="utf-8"
     )
     try:
+        inicio_dump = time.perf_counter() if coletor_metricas is not None else None
         json.dump(job, arquivo_job, ensure_ascii=False, indent=2)
         arquivo_job.close()
+        if coletor_metricas is not None:
+            coletor_metricas["json_build_sec"] = coletor_metricas.get(
+                "json_build_sec", 0.0
+            ) + (time.perf_counter() - inicio_dump)
 
         comando = [
             executavel,
@@ -226,6 +285,7 @@ def renderizar_cena_3d(job, timeout_segundos=300):
         ]
         print(f" > Invocando Blender headless: {' '.join(comando)}")
 
+        inicio_subprocesso = time.perf_counter() if coletor_metricas is not None else None
         try:
             resultado = subprocess.run(
                 comando,
@@ -234,6 +294,7 @@ def renderizar_cena_3d(job, timeout_segundos=300):
                 encoding="utf-8",
                 errors="replace",
                 timeout=timeout_segundos,
+                env=os.environ,
             )
         except FileNotFoundError as exc:
             raise BlenderNaoEncontradoError(
@@ -274,6 +335,19 @@ def renderizar_cena_3d(job, timeout_segundos=300):
             if MARCADOR_SUCESSO in linha:
                 print(f" > {linha.strip()}")
                 break
+
+        if coletor_metricas is not None:
+            subprocess_total = time.perf_counter() - inicio_subprocesso
+            coletor_metricas["subprocess_total_sec"] = subprocess_total
+            interno = extrair_metricas_blender(resultado.stdout)
+            coletor_metricas["blender_interno"] = interno
+            if interno and interno.get("total_script_sec") is not None:
+                coletor_metricas["subprocess_overhead_sec"] = round(
+                    subprocess_total - interno["total_script_sec"], 6
+                )
+            else:
+                coletor_metricas["subprocess_overhead_sec"] = None
+            _imprimir_log_metricas(coletor_metricas)
 
         return caminho_saida
     finally:

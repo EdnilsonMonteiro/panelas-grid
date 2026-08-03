@@ -53,6 +53,7 @@ import math
 import os
 import random
 import sys
+import time
 import traceback
 
 import bmesh
@@ -61,6 +62,10 @@ from mathutils import Vector
 
 MARCADOR_SUCESSO = "[RENDER_3D_OK]"
 MARCADOR_ERRO = "[RENDER_3D_ERRO]"
+
+# Marcador usado pelo wrapper (blender_headless.py) para localizar o JSON de
+# métricas no stdout, quando a telemetria está ativa.
+MARCADOR_METRICAS = "[RENDER_METRICS_JSON]"
 
 # Os modelos .glb (cubas, panelas e comidas) são importados na orientação
 # original do arquivo: já vêm modelados "em pé" (abertura/base alinhadas
@@ -100,6 +105,152 @@ PALETA_PADRAO = [
     (0.65, 0.55, 0.25),  # mostarda
     (0.50, 0.30, 0.45),  # vinho
 ]
+
+
+# ---------------------------------------------------------------------------
+# Telemetria opcional (ENABLE_RENDER_METRICS = true/1/yes, case-insensitive)
+#
+# Quando inativa, nenhuma chamada de timer é feita e nenhum arquivo é criado:
+# o fluxo de renderização permanece exatamente o original.
+# ---------------------------------------------------------------------------
+def _metricas_ativas():
+    valor = os.environ.get("ENABLE_RENDER_METRICS", "").strip().lower()
+    return valor in ("true", "1", "yes")
+
+
+METRICAS_ATIVAS = _metricas_ativas()
+_INICIO_SCRIPT = time.perf_counter()
+METRICAS = {}
+_PROCESSO_MONITORADO = None  # psutil.Process usado para CPU (best-effort)
+
+CHAVES_METRICAS_TEMPO = (
+    "init_sec",
+    "balcao_setup_sec",
+    "food_allocation_sec",
+    "boolean_operations_sec",
+    "environment_and_dimensions_sec",
+    "eevee_render_sec",
+    "file_save_sec",
+    "total_script_sec",
+)
+
+if METRICAS_ATIVAS:
+    METRICAS.update({chave: 0.0 for chave in CHAVES_METRICAS_TEMPO})
+    METRICAS["peak_memory_mb"] = 0.0
+    METRICAS["cpu_percent"] = 0.0
+
+
+def _registrar_metrica(chave, inicio):
+    """Acumula a duração da fase `chave` em segundos (perf_counter)."""
+    if METRICAS_ATIVAS:
+        METRICAS[chave] += time.perf_counter() - inicio
+
+
+def _amostrar_memoria_pico():
+    """Mede o pico de RAM (RSS) funcionando nativamente em Windows e Linux,
+    sem depender obrigatoriamente do pacote 'psutil' instalado no Blender.
+    """
+    if not METRICAS_ATIVAS:
+        return
+
+    rss_mb = 0.0
+
+    # 1. TENTATIVA COM PSUTIL (Se instalado no Python do Blender)
+    try:
+        import psutil
+
+        processo = psutil.Process(os.getpid())
+        # Inclui a memória de processos filhos criados pelo Blender, se houver
+        mem_bytes = processo.memory_info().rss
+        for filho in processo.children(recursive=True):
+            try:
+                mem_bytes += filho.memory_info().rss
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        rss_mb = mem_bytes / (1024.0 * 1024.0)
+    except Exception:
+        pass
+
+    # 2. FALLBACK PARA WINDOWS (Win32 API nativa via ctypes - Sem instalar nada)
+    if rss_mb == 0.0 and os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
+                _fields_ = [
+                    ("cb", wintypes.DWORD),
+                    ("PageFaultCount", wintypes.DWORD),
+                    ("PeakWorkingSetSize", ctypes.c_size_t),
+                    ("WorkingSetSize", ctypes.c_size_t),
+                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                    ("PagefileUsage", ctypes.c_size_t),
+                    ("PeakPagefileUsage", ctypes.c_size_t),
+                ]
+
+            pmc = PROCESS_MEMORY_COUNTERS()
+            pmc.cb = ctypes.sizeof(PROCESS_MEMORY_COUNTERS)
+            handle = ctypes.windll.kernel32.GetCurrentProcess()
+
+            if ctypes.windll.psapi.GetProcessMemoryInfo(
+                handle, ctypes.byref(pmc), pmc.cb
+            ):
+                # PeakWorkingSetSize armazena o PICO MÁXIMO de RAM que o processo já atingiu
+                rss_mb = pmc.PeakWorkingSetSize / (1024.0 * 1024.0)
+        except Exception:
+            pass
+
+    # 3. FALLBACK PARA LINUX / POSIX (via módulo 'resource')
+    if rss_mb == 0.0:
+        try:
+            import resource
+
+            pico_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            # No Linux, ru_maxrss é retornado em Kilobytes
+            # No macOS (Darwin), é retornado em Bytes
+            divisor = 1024.0 if sys.platform != "darwin" else (1024.0 * 1024.0)
+            rss_mb = pico_kb / divisor
+        except Exception:
+            pass
+
+    # 4. FALLBACK FINAL: Memória da cena do próprio Blender (bpy.app.memory)
+    if rss_mb == 0.0:
+        try:
+            # bpy.app.memory.peak_usage() indica o pico de RAM alocado para geometria/shaders
+            rss_mb = bpy.app.memory.peak_usage() / (1024.0 * 1024.0)
+        except Exception:
+            pass
+
+    # Atualiza o pico global armazenado
+    if rss_mb > 0.0:
+        METRICAS["peak_memory_mb"] = max(METRICAS.get("peak_memory_mb", 0.0), rss_mb)
+
+
+def _iniciar_cpu():
+    """Prepara a medição de CPU do processo Blender (psutil)."""
+    global _PROCESSO_MONITORADO
+    if not METRICAS_ATIVAS:
+        return
+    try:
+        import psutil
+
+        _PROCESSO_MONITORADO = psutil.Process(os.getpid())
+        _PROCESSO_MONITORADO.cpu_percent(interval=None)
+    except Exception:
+        _PROCESSO_MONITORADO = None
+
+
+def _finalizar_cpu():
+    """Retorna o % de CPU do processo Blender desde `_iniciar_cpu`."""
+    if _PROCESSO_MONITORADO is None:
+        return 0.0
+    try:
+        return _PROCESSO_MONITORADO.cpu_percent(interval=None)
+    except Exception:
+        return 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -731,7 +882,9 @@ def _aparar_comida_circular(tops, item, z_base):
         modificador.operation = "INTERSECT"
         modificador.object = cilindro
         bpy.context.view_layer.objects.active = objeto
+        inicio_boolean = time.perf_counter()
         bpy.ops.object.modifier_apply(modifier=modificador.name)
+        _registrar_metrica("boolean_operations_sec", inicio_boolean)
 
     bpy.data.objects.remove(cilindro, do_unlink=True)
 
@@ -782,7 +935,6 @@ def _aparar_grade_retangular(raizes, item):
         bm.to_mesh(malha.data)
         bm.free()
         malha.data.update()
-
 
 
 def posicionar_comida(item, caminho_comida, z_tampo):
@@ -1129,10 +1281,22 @@ def main():
     job = ler_argumentos_json()
     glb_dir = job.get("glb_dir")
 
+    inicio = time.perf_counter()
     carregar_cenario(job.get("template_path"))
+    _registrar_metrica("init_sec", inicio)
+    _amostrar_memoria_pico()
+
+    # Piso + parede PBR procedurais fazem parte da fase de ambiente
+    inicio = time.perf_counter()
     configurar_piso(job["balcao"])
     configurar_parede(job["balcao"])
+    _registrar_metrica("environment_and_dimensions_sec", inicio)
+
+    inicio = time.perf_counter()
     z_tampo = configurar_balcao(job["balcao"], glb_dir)
+    _registrar_metrica("balcao_setup_sec", inicio)
+    _amostrar_memoria_pico()
+
     configurar_iluminacao()
     camera = configurar_camera(job.get("camera", {}), job["balcao"])
 
@@ -1140,26 +1304,60 @@ def main():
     seed_comidas = os.environ.get("COMIDA_SEED")
     if seed_comidas is not None:
         random.seed(int(seed_comidas))  # seed fixa para experimentos A/B
+
+    # Cálculo de posições, sorteio do baralho, grade N x M e medição de Z interno
+    inicio = time.perf_counter()
     deck_comidas = FoodDeckManager(comidas_dir)
     posicionar_itens(job.get("itens", []), glb_dir, z_tampo, deck_comidas)
+    _registrar_metrica("food_allocation_sec", inicio)
+    _amostrar_memoria_pico()
 
     conf_cotas = job.get("cotas", {})
     if conf_cotas.get("exibir"):
+        inicio = time.perf_counter()
         construir_cotas(job["balcao"], conf_cotas, camera, z_tampo)
+        _registrar_metrica("environment_and_dimensions_sec", inicio)
 
     configurar_render(job.get("render", {}), job["output_path"])
+    saida = bpy.context.scene.render.filepath
 
     if SALVAR_BLEND_DEBUG:
         bpy.ops.wm.save_mainfile(filepath=CAMINHO_BLEND_DEBUG, check_existing=False)
         print(f" > [Debug] Cena salva para inspeção manual: {CAMINHO_BLEND_DEBUG}")
 
-    bpy.ops.render.render(write_still=True)
+    if METRICAS_ATIVAS:
+        # Renderiza em memória e grava o PNG separadamente, para medir de forma
+        # estrita o tempo do Eevee e o tempo de escrita no disco.
+        _iniciar_cpu()
+        inicio = time.perf_counter()
+        bpy.ops.render.render(write_still=False)
+        _registrar_metrica("eevee_render_sec", inicio)
+        METRICAS["cpu_percent"] = _finalizar_cpu()
+        _amostrar_memoria_pico()
 
-    saida = bpy.context.scene.render.filepath
+        inicio = time.perf_counter()
+        bpy.data.images["Render Result"].save_render(filepath=saida)
+        _registrar_metrica("file_save_sec", inicio)
+    else:
+        bpy.ops.render.render(write_still=True)
+
     if not os.path.exists(saida):
         raise RuntimeError(
             f"Renderização concluída, mas o arquivo não foi gerado: {saida}"
         )
+
+    if METRICAS_ATIVAS:
+        _registrar_metrica("total_script_sec", _INICIO_SCRIPT)
+        pacote_metricas = {
+            "blender_version": bpy.app.version_string,
+            "render_engine": bpy.context.scene.render.engine,
+        }
+        for chave, valor in METRICAS.items():
+            if chave in CHAVES_METRICAS_TEMPO:
+                pacote_metricas[chave] = round(valor, 6)
+            else:
+                pacote_metricas[chave] = round(valor, 1)
+        print(f"{MARCADOR_METRICAS} {json.dumps(pacote_metricas, ensure_ascii=False)}")
 
     print(f"{MARCADOR_SUCESSO} {saida}")
 
