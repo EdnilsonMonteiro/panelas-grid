@@ -55,6 +55,7 @@ import random
 import sys
 import traceback
 
+import bmesh
 import bpy
 from mathutils import Vector
 
@@ -735,6 +736,55 @@ def _aparar_comida_circular(tops, item, z_base):
     bpy.data.objects.remove(cilindro, do_unlink=True)
 
 
+def _aparar_grade_retangular(raizes, item):
+    """Apara o que vaza das bordas retangulares da cuba removendo os VÉRTICES
+    (bmesh) fora da boca útil do recipiente (88% da abertura): toda face com
+    um vértice fora é eliminada, garantindo spill zero e borda limpa (entalhes
+    de ~2-4 mm, escondidos pela parede da cuba).
+
+    Não usa Boolean (malhas do Tripo são não-manifold e o solver as esvazia)
+    nem bake (preserva as normais originais da malha). Determinístico e rápido."""
+    abertura_x = item["largura_m"] * FATOR_BOCA_COMIDA
+    abertura_y = item["profundidade_m"] * FATOR_BOCA_COMIDA
+    meia_x = abertura_x / 2.0
+    meia_y = abertura_y / 2.0
+    cx = item["x"]
+    cy = item["y"]
+
+    malhas = []
+    pilha = list(raizes)
+    while pilha:
+        objeto = pilha.pop()
+        if objeto.type == "MESH":
+            malhas.append(objeto)
+        pilha.extend(objeto.children)
+
+    bpy.context.view_layer.update()
+    for malha in malhas:
+        if malha.data.users > 1:
+            malha.data = malha.data.copy()  # copias da grade compartilham o mesh
+        mundo = malha.matrix_world
+        bm = bmesh.new()
+        bm.from_mesh(malha.data)
+        bm.verts.ensure_lookup_table()
+        fora = [
+            v
+            for v in bm.verts
+            if abs((mundo @ v.co).x - cx) > meia_x
+            or abs((mundo @ v.co).y - cy) > meia_y
+        ]
+        if fora:
+            bmesh.ops.delete(bm, geom=fora, context="VERTS")
+        # remove vértices soltos deixados pelo corte
+        soltos = [v for v in bm.verts if not v.link_faces]
+        if soltos:
+            bmesh.ops.delete(bm, geom=soltos, context="VERTS")
+        bm.to_mesh(malha.data)
+        bm.free()
+        malha.data.update()
+
+
+
 def posicionar_comida(item, caminho_comida, z_tampo):
     """Importa a comida e preenche a boca do recipiente EXCLUSIVAMENTE com as
     instâncias da malha 3D da comida (sem geometria extra de fundo/massa).
@@ -742,7 +792,8 @@ def posicionar_comida(item, caminho_comida, z_tampo):
     - Retângulo: grade N x M densa (células ~10 cm, mínimo 2x2), escala por
       eixo preenchendo cada célula (eixos trocados nas rotações de 90/270°,
       sem cisalhamento), rotação Z aleatória, variação de escala ±2%,
-      overlap 1.40 e jitter Z de 8 mm.
+      overlap 1.40 e jitter Z de 8 mm. O que vaza das bordas retangulares é
+      aparado removendo as faces fora da boca útil (bmesh, sem Boolean).
     - Círculo: peça única centralizada, dimensionada a ~88% da abertura, com
       as quinas aparadas na borda circular (Boolean INTERSECT).
     A comida assenta sobre o fundo interno medido do recipiente (cavidade),
@@ -802,6 +853,7 @@ def posicionar_comida(item, caminho_comida, z_tampo):
     )
 
     primeira = True
+    raizes = []
     for i in range(qtd_x):
         for j in range(qtd_y):
             offset_x = (i + 0.5) * celula_x - abertura_x / 2.0
@@ -823,7 +875,7 @@ def posicionar_comida(item, caminho_comida, z_tampo):
             else:
                 escala_local_x = celula_x / dim_x
                 escala_local_y = celula_y / dim_y
-            _montar_instancia_comida(
+            raiz = _montar_instancia_comida(
                 alvos,
                 item["nome"],
                 f"{i}_{j}",
@@ -839,6 +891,10 @@ def posicionar_comida(item, caminho_comida, z_tampo):
                     escala_local_x * fator,
                 ),
             )
+            raizes.append(raiz)
+
+    # Apara o que vaza para fora das bordas retangulares da cuba
+    _aparar_grade_retangular(raizes, item)
 
 
 # ---------------------------------------------------------------------------
