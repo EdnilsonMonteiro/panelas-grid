@@ -16,5 +16,6 @@ popular_catalogos.py
 assets/*.blend*
 assets/textures/*
 assets/templates/*
+assets/hdri/*
 # Relatórios de métricas gerados pela telemetria (ENABLE_RENDER_METRICS)
 assets/reports/*

@@ -16,16 +16,25 @@ Responsabilidades (conforme SPEC_3D_RENDER.md):
        (cilindro para formato "circulo", caixa para "retangulo").
     5. Sortear comidas de `assets/glb/comidas/` via deck sem repetição
        (FoodDeckManager) e preenchê-las em grade N x M dentro das cubas
-       retangulares (rotação Z aleatória em 0/90/180/270° e variação de
-       escala ±5% por cópia), preservando as bordas visíveis. Formato
-       "circulo" sorteia apenas entre arroz/feijao/macarrao (peça única).
+       retangulares com anti-tiling (rotação Z aleatória em 0/90/180/270°,
+       espelhamento aleatório em X/Y em 50% das células, jitter de altura Z
+       ±2-5 mm e variação de escala por cópia), preservando as bordas
+       visíveis. Formato "circulo" sorteia apenas entre arroz/feijao/
+       macarrao (peça única).
     6. Erguer piso e parede como planos procedurais com materiais PBR
        construídos a partir de `assets/textures/piso/` (tiling via nó
        Mapping) e `assets/textures/parede/` (detecta dinamicamente mapa
        Specular vs Roughness).
-    7. Desenhar cotas dimensionais (linhas CURVE brancas emissivas + textos
+    7. Iluminar a cena como estúdio de fotografia de alimentos: World HDRI
+       dinâmico de `assets/textures/hdri/` (`.hdr`/`.exr`, Strength 0.8) +
+       2 area lights quentes (~3800 K, 30-80 W) acima e inclinadas sobre o
+       balcão, calibradas para não estourar os brancos.
+    8. Desenhar cotas dimensionais (linhas CURVE brancas emissivas + textos
        FONT com constraint de rotação para a câmera) em metros.
-    8. Configurar o renderizador `BLENDER_EEVEE_NEXT` e gerar a imagem `.png`.
+    9. Configurar o renderizador `BLENDER_EEVEE_NEXT`, o color management
+       (`AgX` com fallback `Filmic`, look Medium High Contrast/None e
+       exposure -0.85) e o bloom suave (threshold 3.5), gerando a imagem
+       `.png`.
 
 Contrato do JSON de entrada (todas as medidas em METROS, coordenadas no
 CENTRO da peça, eixo Z apontando para cima):
@@ -88,6 +97,12 @@ CAMINHO_BLEND_DEBUG = os.path.join(RAIZ_PROJETO, "assets", "debug_ultimo_render.
 GLB_BALCAO = "balcao.glb"
 SUBPASTA_COMIDAS = "comidas"
 PASTA_TEXTURAS = os.path.join(RAIZ_PROJETO, "assets", "textures")
+# HDRI de ambiente: pasta primária conforme a spec (assets/textures/hdri/);
+# fallback para assets/hdri/ (layout histórico do repositório).
+PASTAS_HDRI = (
+    os.path.join(PASTA_TEXTURAS, "hdri"),
+    os.path.join(RAIZ_PROJETO, "assets", "hdri"),
+)
 
 # Encaixe da comida na boca do recipiente: fração da abertura ocupada (~88%),
 # mantendo as bordas do recipiente visíveis ao redor.
@@ -96,13 +111,15 @@ FATOR_BOCA_COMIDA = 0.88
 # Preenchimento em grade: tamanho alvo de cada célula da grade (garante
 # grades >= 2x2 nas cubas de 21 cm), variação de escala por cópia, overlap
 # agressivo entre células (1.40: cobre o "vale" do perfil morro dos assets,
-# medido em ~10-20% da bbox por borda) e jitter vertical por cópia (8 mm:
-# quebra o vale coplanar e dá relevo natural). Env vars COMIDA_TRANSBORDO /
+# medido em ~10-20% da bbox por borda) e jitter vertical SIMÉTRICO por
+# cópia (±2 a 5 mm: quebra o vale coplanar e dá relevo natural sem criar
+# superfícies perfeitamente planas). Env vars COMIDA_TRANSBORDO /
 # COMIDA_JITTER_Z / COMIDA_SEED permitem experimentos A/B sem editar código.
 CELULA_COMIDA_M = 0.10
 VARIACAO_ESCALA_COMIDA = 0.02
 FATOR_TRANSBORDO_CELULA = float(os.environ.get("COMIDA_TRANSBORDO", "1.40"))
-JITTER_Z_COMIDA_M = float(os.environ.get("COMIDA_JITTER_Z", "0.008"))
+JITTER_Z_MIN_COMIDA_M = 0.002
+JITTER_Z_MAX_COMIDA_M = float(os.environ.get("COMIDA_JITTER_Z", "0.005"))
 
 PALETA_PADRAO = [
     (0.62, 0.35, 0.17),  # terracota
@@ -733,25 +750,150 @@ def configurar_camera(conf_camera, conf_balcao):
     return camera
 
 
-def configurar_iluminacao():
-    sol = bpy.data.objects.get("Sol")
-    if sol is None:
-        dados_sol = bpy.data.lights.new("Sol", type="SUN")
-        sol = bpy.data.objects.new("Sol", dados_sol)
-        bpy.context.scene.collection.objects.link(sol)
-    sol.data.energy = 2.0
-    sol.data.angle = math.radians(30.0)
-    sol.rotation_euler = (math.radians(50), math.radians(-15), math.radians(35))
+# Fotografia de alimentos: cor quente das luzes principais (~3800 K) e
+# intensidade do HDRI de ambiente. Strength 0.8 calibrado para não estourar
+# os brancos (acima de 1.0 o cowboy_town_saloon_2k.exr satura a cena).
+COR_LUZ_QUENTE = (1.0, 0.9, 0.8)
+INTENSIDADE_HDRI = 1.0
 
+
+def _encontrar_hdri():
+    """Localiza dinamicamente o primeiro arquivo `.hdr`/`.exr` das pastas de
+    HDRI (`assets/textures/hdri/` com fallback para `assets/hdri/`)."""
+    for pasta in PASTAS_HDRI:
+        if not os.path.isdir(pasta):
+            continue
+        for caminho in sorted(glob.glob(os.path.join(pasta, "*"))):
+            if caminho.lower().endswith((".hdr", ".exr")):
+                return caminho
+    return None
+
+
+def _configurar_mundo_hdri(caminho_hdri):
+    """Conecta o HDRI ao `World.node_tree` via `ShaderNodeTexEnvironment`
+    (Background com Strength 0.8), gerando iluminação/reflexos de estúdio."""
     mundo = bpy.context.scene.world
     if mundo is None:
         mundo = bpy.data.worlds.new("Mundo")
         bpy.context.scene.world = mundo
     mundo.use_nodes = True
-    fundo = mundo.node_tree.nodes.get("Background")
-    if fundo is not None:
-        fundo.inputs["Color"].default_value = (0.85, 0.87, 0.92, 1.0)
-        fundo.inputs["Strength"].default_value = 0.35
+    arvore = mundo.node_tree
+    for no in list(arvore.nodes):
+        if no.type not in ("BACKGROUND", "OUTPUT_WORLD"):
+            arvore.nodes.remove(no)
+    fundo = next((n for n in arvore.nodes if n.type == "BACKGROUND"), None)
+    if fundo is None:
+        fundo = arvore.nodes.new("ShaderNodeBackground")
+    saida = next((n for n in arvore.nodes if n.type == "OUTPUT_WORLD"), None)
+    if saida is None:
+        saida = arvore.nodes.new("ShaderNodeOutputWorld")
+
+    ambiente = arvore.nodes.new("ShaderNodeTexEnvironment")
+    ambiente.image = bpy.data.images.load(caminho_hdri)
+    arvore.links.new(ambiente.outputs["Color"], fundo.inputs["Color"])
+    fundo.inputs["Strength"].default_value = INTENSIDADE_HDRI
+    arvore.links.new(fundo.outputs["Background"], saida.inputs["Surface"])
+
+
+def _criar_area_light(nome, posicao, alvo, energia, size_x, size_y, angulo_graus=45.0):
+    """Area light RECTANGLE na posição dada, com cor quente de fotografia de
+    alimentos. Aponta para o alvo com elevação fixa de ~45° em relação ao
+    tampo (evita iluminação 100% vertical de topo). Luzes grandes e suaves
+    não queimam alimentos claros (arroz/batata)."""
+    objeto = bpy.data.objects.get(nome)
+    if objeto is None:
+        dados_luz = bpy.data.lights.new(nome, type="AREA")
+        objeto = bpy.data.objects.new(nome, dados_luz)
+        bpy.context.scene.collection.objects.link(objeto)
+    objeto.data.color = COR_LUZ_QUENTE
+    objeto.data.energy = energia
+    # RECTANGLE: no Blender 4.x o tamanho é size_x/size_y; no 5.x o size é a
+    # largura (X) e size_y a altura (Y).
+    try:
+        objeto.data.shape = "RECTANGLE"
+    except TypeError:
+        pass
+    if hasattr(objeto.data, "size_x"):
+        objeto.data.size_x = size_x
+        objeto.data.size_y = size_y
+    else:
+        objeto.data.size = size_x
+        objeto.data.size_y = size_y
+    objeto.location = posicao
+
+    # Direção horizontal para o alvo + elevação fixa de `angulo_graus`
+    horizontal = Vector((alvo[0], alvo[1], 0.0)) - Vector((posicao[0], posicao[1], 0.0))
+    horizontal.z = 0.0
+    if horizontal.length_squared < 1e-9:
+        horizontal = Vector((1.0, 0.0, 0.0))
+    else:
+        horizontal.normalize()
+    angulo = math.radians(angulo_graus)
+    direcao = Vector(
+        (
+            horizontal.x * math.cos(angulo),
+            horizontal.y * math.cos(angulo),
+            -math.sin(angulo),
+        )
+    )
+    objeto.rotation_euler = direcao.to_track_quat("-Z", "Y").to_euler()
+    return objeto
+
+
+def configurar_iluminacao(conf_balcao):
+    """Iluminação de estúdio/restaurante (food photography): World HDRI
+    dinâmico + 2 area lights quentes (~3800 K) acima e levemente inclinadas
+    sobre o balcão. Substitui a luz solar plana do template."""
+    # A luz solar chapada (flat light) do template dá lugar ao conjunto
+    # HDRI + area lights quentes.
+    _remover_objeto("Sol")
+
+    caminho_hdri = _encontrar_hdri()
+    if caminho_hdri:
+        _configurar_mundo_hdri(caminho_hdri)
+        print(
+            f" > World HDRI carregado: {os.path.basename(caminho_hdri)} "
+            f"(Strength {INTENSIDADE_HDRI})"
+        )
+    else:
+        mundo = bpy.context.scene.world
+        if mundo is None:
+            mundo = bpy.data.worlds.new("Mundo")
+            bpy.context.scene.world = mundo
+        mundo.use_nodes = True
+        fundo = mundo.node_tree.nodes.get("Background")
+        if fundo is not None:
+            fundo.inputs["Color"].default_value = (0.85, 0.87, 0.92, 1.0)
+            fundo.inputs["Strength"].default_value = 0.35
+        print(
+            " > [Aviso] Nenhum HDRI (.hdr/.exr) encontrado em "
+            "assets/textures/hdri/. Usando fundo chapado como fallback."
+        )
+
+    largura = conf_balcao["largura_m"]
+    profundidade = conf_balcao["profundidade_m"]
+    altura = conf_balcao["altura_m"]
+    centro_balcao = (largura / 2.0, profundidade / 2.0, altura)
+
+    # Luz chave: à frente/esquerda, acima e inclinada a 45° sobre o balcão;
+    # luz de preenchimento: atrás/direita, mais suave e difusa. Luzes
+    # RECTANGLE grandes e de baixa potência não queimam alimentos claros.
+    _criar_area_light(
+        "Luz_Chave",
+        (largura * 0.25, -0.60, altura + 1.10),
+        centro_balcao,
+        energia=80.0,
+        size_x=2.0,
+        size_y=1.0,
+    )
+    _criar_area_light(
+        "Luz_Preenchimento",
+        (largura * 0.75, profundidade + 0.60, altura + 1.40),
+        centro_balcao,
+        energia=35.0,
+        size_x=1.5,
+        size_y=0.8,
+    )
 
 
 def carregar_cenario(template_path):
@@ -1066,7 +1208,9 @@ def _duplicar_hierarquia(objetos_top):
 
 def _montar_instancia_comida(tops, nome, sufixo, posicao, rotacao_z_graus, escala):
     """Ancora as cópias em um empty e aplica posição/rotação Z/escala.
-    A escala é uniforme, portanto não há cisalhamento ao combinar rotação."""
+    A escala é aplicada por eixo ANTES da rotação (R @ S), portanto não há
+    cisalhamento; escala negativa em X/Y é usada para espelhamento
+    (anti-tiling)."""
     raiz = bpy.data.objects.new(f"COMIDA_{nome}_{sufixo}", None)
     bpy.context.scene.collection.objects.link(raiz)
     for topo in tops:
@@ -1150,9 +1294,11 @@ def posicionar_comida(item, caminho_comida, z_tampo):
 
     - Retângulo: grade N x M densa (células ~10 cm, mínimo 2x2), escala por
       eixo preenchendo cada célula (eixos trocados nas rotações de 90/270°,
-      sem cisalhamento), rotação Z aleatória, variação de escala ±2%,
-      overlap 1.40 e jitter Z de 8 mm. O que vaza das bordas retangulares é
-      aparado removendo as faces fora da boca útil (bmesh, sem Boolean).
+      sem cisalhamento), rotação Z aleatória (0/90/180/270°), espelhamento
+      aleatório em X/Y (50% das células), variação de escala ±2%, overlap
+      1.40 e jitter Z simétrico ±2-5 mm (anti-tiling). O que vaza das bordas
+      retangulares é aparado removendo as faces fora da boca útil (bmesh,
+      sem Boolean).
     - Círculo: peça única centralizada, dimensionada a ~88% da abertura, com
       as quinas aparadas na borda circular (bmesh por raio, sem Boolean).
     A comida assenta sobre o fundo interno medido do recipiente (cavidade),
@@ -1207,8 +1353,15 @@ def posicionar_comida(item, caminho_comida, z_tampo):
                 1.0 - VARIACAO_ESCALA_COMIDA, 1.0 + VARIACAO_ESCALA_COMIDA
             )
             fator *= FATOR_TRANSBORDO_CELULA  # folhas transbordam a célula
-            # Jitter Z: quebra o vale coplanar entre instâncias vizinhas
-            jitter_z = random.uniform(0.0, JITTER_Z_COMIDA_M)
+            # Anti-tiling: jitter Z simétrico (±2 a 5 mm) quebra o vale
+            # coplanar entre instâncias vizinhas sem superfícies planas
+            jitter_z = random.choice((-1.0, 1.0)) * random.uniform(
+                JITTER_Z_MIN_COMIDA_M, JITTER_Z_MAX_COMIDA_M
+            )
+            # Anti-tiling: espelhamento aleatório em X ou Y (50% das células)
+            eixo_espelho = None
+            if random.random() < 0.5:
+                eixo_espelho = random.choice(("x", "y"))
             # Escala por eixo preenchendo a célula; nas rotações de 90/270°
             # os eixos do modelo trocam (R @ S: escala local, depois gira)
             if rotacao in (90.0, 270.0):
@@ -1217,6 +1370,12 @@ def posicionar_comida(item, caminho_comida, z_tampo):
             else:
                 escala_local_x = celula_x / dim_x
                 escala_local_y = celula_y / dim_y
+            # O espelhamento inverte o sinal da escala no eixo sorteado; a
+            # escala vertical (Z) usa o módulo para nunca virar a comida
+            if eixo_espelho == "x":
+                escala_local_x = -escala_local_x
+            elif eixo_espelho == "y":
+                escala_local_y = -escala_local_y
             raiz = _montar_instancia_comida(
                 alvos,
                 item["nome"],
@@ -1230,7 +1389,7 @@ def posicionar_comida(item, caminho_comida, z_tampo):
                 escala=(
                     escala_local_x * fator,
                     escala_local_y * fator,
-                    escala_local_x * fator,
+                    abs(escala_local_x) * fator,
                 ),
             )
             # Células totalmente interiores não tocam as bordas da abertura
@@ -1488,6 +1647,179 @@ def configurar_aceleracao_gpu():
 # ---------------------------------------------------------------------------
 # Renderização
 # ---------------------------------------------------------------------------
+def _configurar_color_grading(cena):
+    """Color management fotográfico: AgX com look de alto contraste,
+    eliminando o aspecto cinzento/desbotado da imagem.
+
+    Em Blender 5.x o AgX não expõe mais looks de contraste (apenas 'None');
+    nesse caso o look permanece 'None' (AgX já tonemapa sozinho). Em versões
+    4.x o AgX aceita 'Medium High Contrast'. Filmic é fallback apenas quando
+    o AgX não existe no Blender.
+
+    Exposure -0.85 reduz a queima de brancos (arroz/batata) sem apagar as
+    sombras."""
+    try:
+        cena.view_settings.exposure = -0.85
+    except TypeError:
+        pass
+    for transformacao in ("AgX", "Filmic"):
+        try:
+            cena.view_settings.view_transform = transformacao
+        except TypeError:
+            continue
+        for look in ("Medium High Contrast", "High Contrast", "None"):
+            try:
+                cena.view_settings.look = look
+                break
+            except TypeError:
+                continue
+        break
+    print(
+        f" > Color management: view_transform="
+        f"'{cena.view_settings.view_transform}', look='{cena.view_settings.look}', "
+        f"exposure={cena.view_settings.exposure}"
+    )
+
+
+def _configurar_bloom(cena):
+    """Bloom suave para destacar reflexos nos molhos e nas superfícies
+    cerâmicas sem estourar a cena (threshold alto: só brilha acima do branco
+    difuso). Cobre as três gerações do Eevee:
+
+    - Eevee legado: bloom nativo do motor (threshold/knee).
+    - Eevee Next <= 4.x: bloom recriado com Glare no compositor da cena
+      (`scene.node_tree`).
+    - Blender 5.x: compositor migrou para `scene.compositing_node_group`;
+      o render entra pelo nó CompositorNodeRLayers dentro do grupo.
+    Nunca quebra o render: qualquer falha vira aviso e segue sem bloom."""
+    try:
+        if hasattr(cena, "eevee") and hasattr(cena.eevee, "use_bloom"):
+            cena.eevee.use_bloom = True
+            cena.eevee.bloom_threshold = 3.5  # só especulares de metal/molho
+            if hasattr(cena.eevee, "bloom_intensity"):
+                cena.eevee.bloom_intensity = 0.05  # brilho suave, sem névoa
+            cena.eevee.bloom_knee = 0.5
+            print(" > Bloom do Eevee ativado (threshold 3.5, intensity 0.05).")
+            return
+
+        # --- Blender 5.x: compositor como node group da cena ---
+        if hasattr(cena, "compositing_node_group"):
+            grupo = cena.compositing_node_group
+            if grupo is None:
+                grupo = _criar_grupo_compositor(cena)
+            try:
+                cena.use_nodes = True
+            except TypeError:
+                pass
+            _configurar_bloom_glare(grupo)
+            print(" > Bloom via compositor 5.x (Glare/Bloom, threshold 3.5).")
+            return
+
+        # --- Blender <= 4.x: compositor no node_tree da cena ---
+        if hasattr(cena, "node_tree"):
+            cena.use_nodes = True
+            arvore = cena.node_tree
+            composite = next(
+                (n for n in arvore.nodes if n.type == "COMPOSITE"), None
+            )
+            if composite is None:
+                composite = arvore.nodes.new("CompositorNodeComposite")
+            entrada = composite.inputs["Image"]
+            if entrada.is_linked:
+                origem = entrada.links[0].from_socket
+                arvore.links.remove(entrada.links[0])
+            else:
+                camada = next((n for n in arvore.nodes if n.type == "R_LAYERS"), None)
+                if camada is None:
+                    camada = arvore.nodes.new("CompositorNodeRLayers")
+                origem = camada.outputs["Image"]
+            glare = _criar_glare(arvore)
+            arvore.links.new(origem, glare.inputs["Image"])
+            arvore.links.new(glare.outputs["Image"], entrada)
+            print(" > Bloom via compositor (Glare/Bloom, threshold 3.5).")
+            return
+    except Exception as exc:  # noqa: BLE001 - bloom é cosmético, nunca falha o render
+        print(f" > [Aviso] Bloom não pôde ser ativado ({exc}). Render segue sem bloom.")
+
+
+def _criar_glare(arvore, glare_type="Bloom"):
+    """Cria/recupera um nó Glare configurado como Bloom suave. Aceita tanto o
+    Glare clássico (propriedade glare_type) quanto o socket-menu do 5.x."""
+    glare = next((n for n in arvore.nodes if n.type == "GLARE"), None)
+    if glare is None:
+        glare = arvore.nodes.new("CompositorNodeGlare")
+    if hasattr(glare, "glare_type"):
+        glare.glare_type = "BLOOM"
+        # Calibração anti-estouro: threshold 3.5 (o branco difuso do
+        # arroz/batata NÃO ativa o brilho; só especulares de metal/molho)
+        # e mix -0.95 (glare quase imperceptível sobre a imagem original).
+        glare.threshold = 3.5
+        glare.mix = -0.95
+        glare.size = 7
+        try:
+            glare.quality = "HIGH"
+        except TypeError:
+            pass
+    else:
+        # Blender 5.x: parâmetros viraram sockets de entrada (não há Mix:
+        # a força do brilho é controlada pelo Strength, reduzido para suavizar)
+        glare.inputs["Type"].default_value = glare_type
+        glare.inputs["Highlights Threshold"].default_value = 3.5
+        glare.inputs["Highlights Smoothness"].default_value = 0.5
+        glare.inputs["Size"].default_value = 7.0
+        glare.inputs["Strength"].default_value = 0.5
+    return glare
+
+
+def _criar_grupo_compositor(cena):
+    """Cria o node group de composição da cena (Blender 5.x) com a saída
+    'Image' na interface e retorna o grupo. A entrada do render é obtida
+    dentro do grupo pelo nó CompositorNodeRLayers (no 5.2 a interface de
+    entrada do grupo não é alimentada pelo render)."""
+    grupo = bpy.data.node_groups.new("Compositing", "CompositorNodeTree")
+    cena.compositing_node_group = grupo
+    grupo.interface.new_socket("Image", in_out="OUTPUT", socket_type="NodeSocketColor")
+    return grupo
+
+
+def _configurar_bloom_glare(grupo):
+    """Liga o Glare(Bloom) entre o render (CompositorNodeRLayers) e a saída
+    'Image' do node group de composição da cena (Blender 5.x)."""
+    def _socket_interface(nome, in_out):
+        for item in grupo.interface.items_tree:
+            if (
+                getattr(item, "item_type", None) == "SOCKET"
+                and getattr(item, "name", None) == nome
+                and getattr(item, "in_out", None) == in_out
+            ):
+                return
+        grupo.interface.new_socket(nome, in_out=in_out, socket_type="NodeSocketColor")
+
+    _socket_interface("Image", "OUTPUT")
+
+    camada = next((n for n in grupo.nodes if n.type == "R_LAYERS"), None)
+    if camada is None:
+        camada = grupo.nodes.new("CompositorNodeRLayers")
+    saida = next((n for n in grupo.nodes if n.type == "GROUP_OUTPUT"), None)
+    if saida is None:
+        saida = grupo.nodes.new("NodeGroupOutput")
+    glare = _criar_glare(grupo)
+
+    # Rewire idempotente: camada -> glare -> saída do grupo
+    socket_saida = saida.inputs.get("Image")
+    if socket_saida is not None:
+        for ligacao in list(socket_saida.links):
+            grupo.links.remove(ligacao)
+    socket_glare_saida = glare.outputs["Image"]
+    for ligacao in list(socket_glare_saida.links):
+        grupo.links.remove(ligacao)
+    if socket_saida is not None:
+        grupo.links.new(socket_glare_saida, socket_saida)
+    for ligacao in list(glare.inputs["Image"].links):
+        grupo.links.remove(ligacao)
+    grupo.links.new(camada.outputs["Image"], glare.inputs["Image"])
+
+
 def configurar_render(conf_render, output_path):
     cena = bpy.context.scene
 
@@ -1524,12 +1856,10 @@ def configurar_render(conf_render, output_path):
     cena.render.image_settings.file_format = "PNG"
     cena.render.film_transparent = False
 
-    # "Standard" mantém as cores das travessas vivas para a proposta comercial
-    # (o AgX, padrão do Blender 4.x/5.x, dessatura demais a imagem).
-    try:
-        cena.view_settings.view_transform = "Standard"
-    except TypeError:
-        pass
+    # Pós-processamento: color grading AgX/High Contrast (elimina a imagem
+    # cinzenta/desbotada) + bloom suave nos reflexos de molhos/cerâmicas.
+    _configurar_color_grading(cena)
+    _configurar_bloom(cena)
 
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
     cena.render.filepath = os.path.abspath(output_path)
@@ -1557,7 +1887,7 @@ def main():
     _registrar_metrica("balcao_setup_sec", inicio)
     _amostrar_memoria_pico()
 
-    configurar_iluminacao()
+    configurar_iluminacao(job["balcao"])
     camera = configurar_camera(job.get("camera", {}), job["balcao"])
 
     comidas_dir = os.path.join(glb_dir, SUBPASTA_COMIDAS) if glb_dir else None
