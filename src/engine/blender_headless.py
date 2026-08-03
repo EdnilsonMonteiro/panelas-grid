@@ -122,6 +122,13 @@ def montar_job_render(
     if alturas_itens_cm:
         alturas.update(alturas_itens_cm)
 
+    # O env RENDER_AMOSTRAS sobrescreve o valor do parâmetro (default 64),
+    # permitindo A/B de qualidade x velocidade sem editar código.
+    try:
+        amostras = int(os.environ.get("RENDER_AMOSTRAS", amostras))
+    except ValueError:
+        pass
+
     z_tampo_m = round(altura_balcao_cm / 100.0, 4)
 
     ARQUIVO_BASE_RETANGULAR = "cuba_meio.glb"
@@ -283,6 +290,21 @@ def renderizar_cena_3d(job, timeout_segundos=300, coletor_metricas=None):
             "--",
             arquivo_job.name,
         ]
+        # Backdoor de diagnóstico (test-only): RENDER_GPU_DEVICE=<index|hex> fixa
+        # o dispositivo Vulkan do render (--gpu-device-no-fallback: falha rápido
+        # se o dispositivo não existir). Útil para A/B de GPU vs software e para
+        # confirmar o dispositivo real (consulte a métrica render_device).
+        dispositivo_gpu = os.environ.get("RENDER_GPU_DEVICE", "").strip()
+        if dispositivo_gpu:
+            comando.extend(
+                [
+                    "--gpu-backend",
+                    "vulkan",
+                    "--gpu-device",
+                    dispositivo_gpu,
+                    "--gpu-device-no-fallback",
+                ]
+            )
         print(f" > Invocando Blender headless: {' '.join(comando)}")
 
         inicio_subprocesso = time.perf_counter() if coletor_metricas is not None else None

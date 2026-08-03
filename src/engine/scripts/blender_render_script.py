@@ -71,11 +71,17 @@ MARCADOR_METRICAS = "[RENDER_METRICS_JSON]"
 # original do arquivo: já vêm modelados "em pé" (abertura/base alinhadas
 # aos eixos), portanto NENHUMA correção de rotação é aplicada.
 
-# [Debug temporário] Salva a cena montada em .blend para inspeção manual.
+# [Debug] Salva a cena montada em .blend para inspeção manual. Ativo apenas
+# com SALVAR_BLEND_DEBUG = true/1/yes (padrão desligado: o save completo da
+# cena custa ~1,4 s e não interfere no render final).
 RAIZ_PROJETO = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..")
 )
-SALVAR_BLEND_DEBUG = True
+SALVAR_BLEND_DEBUG = os.environ.get("SALVAR_BLEND_DEBUG", "").strip().lower() in (
+    "true",
+    "1",
+    "yes",
+)
 CAMINHO_BLEND_DEBUG = os.path.join(RAIZ_PROJETO, "assets", "debug_ultimo_render.blend")
 
 # Assets de cenário/comida resolvidos a partir dos diretórios do projeto.
@@ -138,6 +144,22 @@ if METRICAS_ATIVAS:
     METRICAS.update({chave: 0.0 for chave in CHAVES_METRICAS_TEMPO})
     METRICAS["peak_memory_mb"] = 0.0
     METRICAS["cpu_percent"] = 0.0
+    METRICAS["render_device"] = None
+
+
+def _dispositivo_render():
+    """Nome do dispositivo de renderização ativo (ex.: 'NVIDIA Corporation |
+    NVIDIA GeForce RTX 4060 Ti'). Inicializa o contexto de GPU (best-effort);
+    se falhar, retorna None e a métrica fica ausente. É o campo que prova se o
+    render rodou em GPU de verdade ou em software (llvmpipe/WARP) num servidor
+    sem GPU."""
+    try:
+        import gpu
+
+        gpu.init()
+        return f"{gpu.platform.vendor_get()} | {gpu.platform.renderer_get()}"
+    except Exception:
+        return None
 
 
 def _registrar_metrica(chave, inicio):
@@ -313,6 +335,69 @@ def _importar_glb(caminho_glb):
     if not importados:
         raise RuntimeError(f"Nenhum objeto importado de '{caminho_glb}'.")
     return importados
+
+
+# Cache de imports GLB: os .glb (travessas e comidas) são importados UMA única
+# vez por arquivo e clonados por item via `_duplicar_hierarquia` (malhas,
+# materiais e texturas compartilhados, transform independente). No job típico
+# isso reduz de ~48 imports GLTF para ~10 (2 travessas únicas + 8 comidas).
+CACHE_GLB = {}
+
+
+def _desvincular_hierarquia(tops):
+    """Desvincula a hierarquia da coleção da cena: os objetos mestres ficam
+    apenas como modelo para `_duplicar_hierarquia`, sem renderizar."""
+    pilha = list(tops)
+    while pilha:
+        objeto = pilha.pop()
+        for colecao in list(objeto.users_collection):
+            colecao.objects.unlink(objeto)
+        pilha.extend(objeto.children)
+
+
+def _importar_glb_cached(caminho_glb):
+    """Importa um .glb uma única vez e devolve os topos da hierarquia mestra
+    (desvinculada da cena). Chamadas seguintes clonam a hierarquia."""
+    registro = CACHE_GLB.get(caminho_glb)
+    if registro is not None:
+        return registro["tops"]
+
+    importados = _importar_glb(caminho_glb)
+    tops = [o for o in importados if o.parent is None]
+    _desvincular_hierarquia(tops)
+    CACHE_GLB[caminho_glb] = {"tops": tops}
+    return tops
+
+
+def _comida_base_cached(caminho_comida):
+    """Importa e normaliza a comida .glb uma única vez: centro da footprint na
+    origem e base em Z=0. Retorna (tops, dim_x, dim_y); as chamadas seguintes
+    clonam a hierarquia mestra já normalizada."""
+    registro = CACHE_GLB.get(caminho_comida)
+    if registro is not None:
+        return registro["tops"], registro["dim_x"], registro["dim_y"]
+
+    tops = _importar_glb_cached(caminho_comida)
+    caixa = _caixa_englobante(tops)
+    if caixa is None:
+        raise RuntimeError(f"Comida '{caminho_comida}' não contém malhas.")
+
+    (min_x, max_x), (min_y, max_y), (min_z, _) = caixa
+    centro_x = (min_x + max_x) / 2.0
+    centro_y = (min_y + max_y) / 2.0
+    for topo in tops:
+        topo.location = (
+            topo.location.x - centro_x,
+            topo.location.y - centro_y,
+            topo.location.z - min_z,
+        )
+
+    CACHE_GLB[caminho_comida] = {
+        "tops": tops,
+        "dim_x": max(max_x - min_x, 1e-6),
+        "dim_y": max(max_y - min_y, 1e-6),
+    }
+    return tops, CACHE_GLB[caminho_comida]["dim_x"], CACHE_GLB[caminho_comida]["dim_y"]
 
 
 def _remover_objeto(nome):
@@ -661,7 +746,47 @@ def _medir_z_fundo_interno(objetos):
     cobrir): percentil 95 dos vértices na região central (30%) da footprint.
     O percentil alto evita confundir a face EXTERNA do fundo (base/pés da
     peça) com a face interna da cavidade. Retorna None se não houver
-    vértices suficientes."""
+    vértices suficientes.
+
+    Vectorizado com numpy (embutido no Python do Blender): a transformação
+    de todos os vértices vira uma única multiplicação de matrizes em lote,
+    em vez de um loop Python por vértice. Fallback em Python puro se o
+    numpy não estiver disponível (mesmo algoritmo original)."""
+    try:
+        import numpy as np
+    except ImportError:
+        np = None
+
+    if np is not None:
+        xs = []
+        ys = []
+        zs = []
+        for objeto in objetos:
+            if objeto.type != "MESH" or not objeto.data.vertices:
+                continue
+            coords = np.empty((len(objeto.data.vertices), 3), dtype=np.float64)
+            objeto.data.vertices.foreach_get("co", coords.ravel())
+            trans = np.array(objeto.matrix_world)[:3, :]
+            mundo = coords @ trans[:, :3].T + trans[:, 3]
+            xs.append(mundo[:, 0])
+            ys.append(mundo[:, 1])
+            zs.append(mundo[:, 2])
+        if not xs:
+            return None
+        px = np.concatenate(xs)
+        py = np.concatenate(ys)
+        pz = np.concatenate(zs)
+        centro_x = (px.min() + px.max()) / 2.0
+        centro_y = (py.min() + py.max()) / 2.0
+        raio_x = (px.max() - px.min()) * 0.15
+        raio_y = (py.max() - py.min()) * 0.15
+        mascara = (np.abs(px - centro_x) < raio_x) & (np.abs(py - centro_y) < raio_y)
+        z_centrais = np.sort(pz[mascara])
+        if z_centrais.size == 0:
+            return None
+        return float(z_centrais[int(z_centrais.size * 0.95)])
+
+    # Fallback: mesmo algoritmo original em Python puro
     pontos = []
     for objeto in objetos:
         if objeto.type == "MESH":
@@ -688,14 +813,16 @@ def importar_travessa_glb(item, caminho_glb, material_fallback):
     """Importa o .glb na orientação original do arquivo e aplica posição/escala
     para casar com a footprint do layout.
 
+    O arquivo é importado UMA única vez (cache) e clonado por item via
+    `_duplicar_hierarquia`: malhas e texturas compartilhadas, transform
+    independente (no job típico, 24 travessas usam apenas 2 arquivos únicos).
+
     Os materiais/texturas originais do .glb são preservados; o material de
-    fallback (cor chapada) só é aplicado em malhas importadas sem material.
+    fallback (cor chapada) só é aplicado em malhas importadas sem material
+    (copiando a malha, pois as cópias compartilham o mesh mestre).
     """
-    objetos_antes = set(bpy.data.objects)
-    bpy.ops.import_scene.gltf(filepath=caminho_glb)
-    importados = [o for o in bpy.data.objects if o not in objetos_antes]
-    if not importados:
-        raise RuntimeError(f"Nenhum objeto importado de '{caminho_glb}'.")
+    tops_mestres = _importar_glb_cached(caminho_glb)
+    importados = _duplicar_hierarquia(tops_mestres)
 
     raiz = bpy.data.objects.new(f"ITEM_{item['nome']}", None)
     bpy.context.scene.collection.objects.link(raiz)
@@ -734,9 +861,13 @@ def importar_travessa_glb(item, caminho_glb, material_fallback):
     )
 
     # Preserva as texturas originais do .glb: a cor chapada só serve de
-    # fallback para malhas que vieram sem nenhum material.
+    # fallback para malhas que vieram sem nenhum material. A malha é copiada
+    # quando compartilhada, para não alterar a hierarquia mestra nem as
+    # cópias de outros itens.
     for objeto in importados:
         if objeto.type == "MESH" and not objeto.data.materials:
+            if objeto.data.users > 1:
+                objeto.data = objeto.data.copy()
             _aplicar_material(objeto, material_fallback)
 
     # Mede o fundo interno real do recipiente para assentar a comida sobre ele
@@ -858,52 +989,8 @@ def _montar_instancia_comida(tops, nome, sufixo, posicao, rotacao_z_graus, escal
     return raiz
 
 
-def _aparar_comida_circular(tops, item, z_base):
-    """Apara as quinas da comida que vazam para fora da borda circular da
-    panela: Boolean INTERSECT em cada malha da comida contra um cilindro
-    auxiliar do tamanho da abertura interna (removido ao final)."""
-    raio = (item["largura_m"] * FATOR_BOCA_COMIDA) / 2.0
-    bpy.ops.mesh.primitive_cylinder_add(
-        radius=raio,
-        depth=2.0,
-        vertices=64,
-        location=(item["x"], item["y"], z_base + 1.0 - 0.01),
-    )
-    cilindro = bpy.context.active_object
-    cilindro.name = f"CORTE_{item['nome']}"
-
-    pilha = list(tops)
-    while pilha:
-        objeto = pilha.pop()
-        pilha.extend(objeto.children)
-        if objeto.type != "MESH":
-            continue
-        modificador = objeto.modifiers.new("CorteCircular", "BOOLEAN")
-        modificador.operation = "INTERSECT"
-        modificador.object = cilindro
-        bpy.context.view_layer.objects.active = objeto
-        inicio_boolean = time.perf_counter()
-        bpy.ops.object.modifier_apply(modifier=modificador.name)
-        _registrar_metrica("boolean_operations_sec", inicio_boolean)
-
-    bpy.data.objects.remove(cilindro, do_unlink=True)
-
-
-def _aparar_grade_retangular(raizes, item):
-    """Apara o que vaza das bordas retangulares da cuba removendo os VÉRTICES
-    (bmesh) fora da boca útil do recipiente (88% da abertura): toda face com
-    um vértice fora é eliminada, garantindo spill zero e borda limpa (entalhes
-    de ~2-4 mm, escondidos pela parede da cuba).
-
-    Não usa Boolean (malhas do Tripo são não-manifold e o solver as esvazia)
-    nem bake (preserva as normais originais da malha). Determinístico e rápido."""
-    abertura_x = item["largura_m"] * FATOR_BOCA_COMIDA
-    abertura_y = item["profundidade_m"] * FATOR_BOCA_COMIDA
-    meia_x = abertura_x / 2.0
-    meia_y = abertura_y / 2.0
-    cx = item["x"]
-    cy = item["y"]
-
+def _coletar_malhas(raizes):
+    """Reúne todas as malhas (recursivo) da hierarquia das instâncias."""
     malhas = []
     pilha = list(raizes)
     while pilha:
@@ -911,6 +998,34 @@ def _aparar_grade_retangular(raizes, item):
         if objeto.type == "MESH":
             malhas.append(objeto)
         pilha.extend(objeto.children)
+    return malhas
+
+
+def _aparar_via_bmesh(raizes, item, circular=False):
+    """Apara o que vaza das bordas do recipiente removendo os VÉRTICES
+    (bmesh) fora da boca útil (88% da abertura): toda face com um vértice
+    fora é eliminada, garantindo spill zero e borda limpa (entalhes de
+    ~2-4 mm, escondidos pela parede do recipiente).
+
+    - Retangular: vértices com |dx| > meia_x OU |dy| > meia_y.
+    - Circular: vértices além do raio da abertura (distância radial em XY).
+
+    Não usa Boolean (malhas do Tripo são não-manifold, o solver as esvazia
+    e o corte custa segundos por peça) nem bake (preserva as normais
+    originais da malha). Determinístico e rápido.
+    O view_layer.update() é agrupado POR ITEM (uma única reavaliação do
+    Dependency Graph antes do corte), e não por célula da grade."""
+    abertura_x = item["largura_m"] * FATOR_BOCA_COMIDA
+    abertura_y = item["profundidade_m"] * FATOR_BOCA_COMIDA
+    meia_x = abertura_x / 2.0
+    meia_y = abertura_y / 2.0
+    raio2 = meia_x * meia_x
+    cx = item["x"]
+    cy = item["y"]
+
+    malhas = _coletar_malhas(raizes)
+    if not malhas:
+        return
 
     bpy.context.view_layer.update()
     for malha in malhas:
@@ -920,12 +1035,16 @@ def _aparar_grade_retangular(raizes, item):
         bm = bmesh.new()
         bm.from_mesh(malha.data)
         bm.verts.ensure_lookup_table()
-        fora = [
-            v
-            for v in bm.verts
-            if abs((mundo @ v.co).x - cx) > meia_x
-            or abs((mundo @ v.co).y - cy) > meia_y
-        ]
+        fora = []
+        for v in bm.verts:
+            p = mundo @ v.co
+            if circular:
+                dx = p.x - cx
+                dy = p.y - cy
+                if dx * dx + dy * dy > raio2:
+                    fora.append(v)
+            elif abs(p.x - cx) > meia_x or abs(p.y - cy) > meia_y:
+                fora.append(v)
         if fora:
             bmesh.ops.delete(bm, geom=fora, context="VERTS")
         # remove vértices soltos deixados pelo corte
@@ -947,29 +1066,13 @@ def posicionar_comida(item, caminho_comida, z_tampo):
       overlap 1.40 e jitter Z de 8 mm. O que vaza das bordas retangulares é
       aparado removendo as faces fora da boca útil (bmesh, sem Boolean).
     - Círculo: peça única centralizada, dimensionada a ~88% da abertura, com
-      as quinas aparadas na borda circular (Boolean INTERSECT).
+      as quinas aparadas na borda circular (bmesh por raio, sem Boolean).
     A comida assenta sobre o fundo interno medido do recipiente (cavidade),
-    ficando logo abaixo da borda superior."""
+    ficando logo abaixo da borda superior.
+    O .glb da comida é importado e normalizado uma única vez (cache) e clonado
+    por item/célula: 24 comidas usam apenas ~8 arquivos únicos."""
     print(f" > Comida para '{item['nome']}': {os.path.basename(caminho_comida)}")
-    importados = _importar_glb(caminho_comida)
-    caixa = _caixa_englobante(importados)
-    if caixa is None:
-        raise RuntimeError(f"Comida '{caminho_comida}' não contém malhas.")
-
-    (min_x, max_x), (min_y, max_y), (min_z, _) = caixa
-    dim_x = max(max_x - min_x, 1e-6)
-    dim_y = max(max_y - min_y, 1e-6)
-
-    # Normaliza o modelo: centro da footprint na origem e base em Z=0
-    centro_x = (min_x + max_x) / 2.0
-    centro_y = (min_y + max_y) / 2.0
-    tops = [o for o in importados if o.parent is None]
-    for topo in tops:
-        topo.location = (
-            topo.location.x - centro_x,
-            topo.location.y - centro_y,
-            topo.location.z - min_z,
-        )
+    tops, dim_x, dim_y = _comida_base_cached(caminho_comida)
 
     # Assenta na cavidade interna (fundo medido; fallback: face superior)
     z_base = item.get("z_fundo_interno", z_tampo + item.get("altura_m", 0.15)) + 0.005
@@ -978,8 +1081,9 @@ def posicionar_comida(item, caminho_comida, z_tampo):
     abertura_y = item["profundidade_m"] * FATOR_BOCA_COMIDA
 
     if item.get("formato") == "circulo":
+        alvos = _duplicar_hierarquia(tops)
         _montar_instancia_comida(
-            tops,
+            alvos,
             item["nome"],
             "0",
             posicao=(item["x"], item["y"], z_base),
@@ -990,8 +1094,8 @@ def posicionar_comida(item, caminho_comida, z_tampo):
                 abertura_x / dim_x,
             ),
         )
-        # Corte perfeito: apara as quinas da comida na borda circular
-        _aparar_comida_circular(tops, item, z_base)
+        # Apara as quinas da comida na borda circular (bmesh, sem Boolean)
+        _aparar_via_bmesh(alvos, item, circular=True)
         return
 
     # Grade densa: células de ~10 cm, sempre >= 2 colunas e 2 linhas
@@ -1004,14 +1108,12 @@ def posicionar_comida(item, caminho_comida, z_tampo):
         f"(célula {celula_x:.3f}x{celula_y:.3f} m)"
     )
 
-    primeira = True
-    raizes = []
+    raizes_borda = []
     for i in range(qtd_x):
         for j in range(qtd_y):
             offset_x = (i + 0.5) * celula_x - abertura_x / 2.0
             offset_y = (j + 0.5) * celula_y - abertura_y / 2.0
-            alvos = tops if primeira else _duplicar_hierarquia(tops)
-            primeira = False
+            alvos = _duplicar_hierarquia(tops)
             rotacao = random.choice((0.0, 90.0, 180.0, 270.0))
             fator = random.uniform(
                 1.0 - VARIACAO_ESCALA_COMIDA, 1.0 + VARIACAO_ESCALA_COMIDA
@@ -1043,10 +1145,22 @@ def posicionar_comida(item, caminho_comida, z_tampo):
                     escala_local_x * fator,
                 ),
             )
-            raizes.append(raiz)
+            # Células totalmente interiores não tocam as bordas da abertura
+            # e dispensam o aparo: pula o bmesh (só as células de borda gastam)
+            interior_x = (
+                abs(offset_x) + (celula_x * FATOR_TRANSBORDO_CELULA) / 2.0
+                <= abertura_x / 2.0
+            )
+            interior_y = (
+                abs(offset_y) + (celula_y * FATOR_TRANSBORDO_CELULA) / 2.0
+                <= abertura_y / 2.0
+            )
+            if not (interior_x and interior_y):
+                raizes_borda.append(raiz)
 
     # Apara o que vaza para fora das bordas retangulares da cuba
-    _aparar_grade_retangular(raizes, item)
+    if raizes_borda:
+        _aparar_via_bmesh(raizes_borda, item)
 
 
 # ---------------------------------------------------------------------------
@@ -1239,6 +1353,51 @@ def construir_cotas(conf_balcao, conf_cotas, camera, z_tampo):
 
 
 # ---------------------------------------------------------------------------
+# Aceleração por GPU do Eevee — USE_GPU_ACCELERATION = true/1/yes
+#
+# ATENÇÃO: os dispositivos OptiX/CUDA das preferências do Cycles NÃO afetam o
+# Eevee (são exclusivos do Cycles). O Eevee usa o backend de GPU global
+# (preferences.system.gpu_backend), que o Blender já seleciona sozinho quando
+# uma GPU está disponível. Esta rotina apenas torna a escolha EXPLÍCITA e
+# desliga o ray-tracing (que não agrega a uma proposta comercial e custa tempo
+# de render). Se a flag estiver ativa mas não houver GPU detectável, o Eevee
+# segue em software (llvmpipe/WARP) e a métrica `render_device` acusará isso.
+# ---------------------------------------------------------------------------
+def _usar_aceleracao_gpu():
+    valor = os.environ.get("USE_GPU_ACCELERATION", "").strip().lower()
+    return valor in ("true", "1", "yes")
+
+
+def configurar_aceleracao_gpu():
+    """Garante que o Eevee use aceleração de hardware (backend de GPU global)
+    e desliga o ray-tracing do Eevee. Ativo apenas com USE_GPU_ACCELERATION."""
+    if not _usar_aceleracao_gpu():
+        return
+
+    print(" > [GPU] Configurando aceleração de hardware para Eevee...")
+    sistema = bpy.context.preferences.system
+
+    try:
+        sistema.gpu_preferred_device = "AUTO"
+    except Exception:
+        pass
+
+    # Backend de GPU do Eevee: prefere Vulkan, cai para OpenGL se indisponível.
+    for backend in ("VULKAN", "OPENGL"):
+        try:
+            sistema.gpu_backend = backend
+            print(f" > [GPU] Backend de GPU do Eevee definido: {backend}.")
+            break
+        except Exception:
+            continue
+
+    scene = bpy.context.scene
+    if hasattr(scene, "eevee"):
+        scene.eevee.use_raytracing = False
+        print(" > [GPU] Ray-tracing do Eevee desligado (não agrega à proposta).")
+
+
+# ---------------------------------------------------------------------------
 # Renderização
 # ---------------------------------------------------------------------------
 def configurar_render(conf_render, output_path):
@@ -1252,8 +1411,19 @@ def configurar_render(conf_render, output_path):
         print(f" > [Aviso] Motor '{motor}' indisponível. Usando 'BLENDER_EEVEE'.")
         cena.render.engine = "BLENDER_EEVEE"
 
-    # Quantidade de amostras (o nome da propriedade mudou entre versões)
+    # Quantidade de amostras (o nome da propriedade mudou entre versões);
+    # o env RENDER_AMOSTRAS sobrescreve o JSON para A/B sem editar código
+    # (ex.: RENDER_AMOSTRAS=32 corta ~metade do tempo do Eevee).
     amostras = int(conf_render.get("amostras", 64))
+    amostras_env = os.environ.get("RENDER_AMOSTRAS", "").strip()
+    if amostras_env:
+        try:
+            amostras = int(amostras_env)
+        except ValueError:
+            print(
+                f" > [Aviso] RENDER_AMOSTRAS inválido ('{amostras_env}'). "
+                f"Usando {amostras}."
+            )
     if hasattr(cena, "eevee"):
         if hasattr(cena.eevee, "taa_samples"):
             cena.eevee.taa_samples = amostras
@@ -1285,6 +1455,8 @@ def main():
     carregar_cenario(job.get("template_path"))
     _registrar_metrica("init_sec", inicio)
     _amostrar_memoria_pico()
+
+    configurar_aceleracao_gpu()
 
     # Piso + parede PBR procedurais fazem parte da fase de ambiente
     inicio = time.perf_counter()
@@ -1328,6 +1500,7 @@ def main():
     if METRICAS_ATIVAS:
         # Renderiza em memória e grava o PNG separadamente, para medir de forma
         # estrita o tempo do Eevee e o tempo de escrita no disco.
+        METRICAS["render_device"] = _dispositivo_render()
         _iniciar_cpu()
         inicio = time.perf_counter()
         bpy.ops.render.render(write_still=False)
@@ -1355,6 +1528,8 @@ def main():
         for chave, valor in METRICAS.items():
             if chave in CHAVES_METRICAS_TEMPO:
                 pacote_metricas[chave] = round(valor, 6)
+            elif chave == "render_device":
+                pacote_metricas[chave] = valor
             else:
                 pacote_metricas[chave] = round(valor, 1)
         print(f"{MARCADOR_METRICAS} {json.dumps(pacote_metricas, ensure_ascii=False)}")

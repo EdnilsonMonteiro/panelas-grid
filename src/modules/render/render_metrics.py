@@ -116,6 +116,11 @@ def construir_relatorio_render(
     ambiente["render_engine"] = interno.get("render_engine") or (
         (job or {}).get("render", {}).get("motor")
     )
+    # Dispositivo de render reportado pelo script do Blender (ex.: 'NVIDIA
+    # Corporation | NVIDIA GeForce RTX 4060 Ti'). Ausente quando a telemetria
+    # está inativa ou o gpu.init() falhou. Em servidor sem GPU, acusará o
+    # software rasterizer (llvmpipe/WARP), provando que o render não usou GPU.
+    ambiente["render_device"] = interno.get("render_device")
 
     return {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
