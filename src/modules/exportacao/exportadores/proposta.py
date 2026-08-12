@@ -20,7 +20,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import cm
-from reportlab.lib.utils import ImageReader
+from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfgen import canvas
 from reportlab.platypus import Paragraph
 
@@ -145,6 +145,7 @@ def _resumo_pistas(pedido) -> Dict[str, Any]:
 
     O comprimento de cada pista é a extensão real ocupada pelos itens
     (a soma das pistas corresponde ao comprimento total do balcão).
+    Pistas sem itens não são incluídas no resumo.
     """
     modulo = pedido.modulos[0]
     secao_pista = {s.nome: s.pista for s in modulo.secoes}
@@ -159,15 +160,14 @@ def _resumo_pistas(pedido) -> Dict[str, Any]:
     profundidade = modulo.engine.P
     resumo: Dict[str, Any] = {}
     for pista in ("quente", "fria"):
-        if extensoes[pista]:
-            x_min = min(e[0] for e in extensoes[pista])
-            x_max = max(e[1] for e in extensoes[pista])
-            resumo[pista] = {
-                "tamanho": f"{x_max - x_min:.0f}x{profundidade:.0f}",
-                "qtd": contagem[pista],
-            }
-        else:
-            resumo[pista] = {"tamanho": None, "qtd": contagem[pista]}
+        if not extensoes[pista]:
+            continue
+        x_min = min(e[0] for e in extensoes[pista])
+        x_max = max(e[1] for e in extensoes[pista])
+        resumo[pista] = {
+            "tamanho": f"{x_max - x_min:.0f}x{profundidade:.0f}",
+            "qtd": contagem[pista],
+        }
 
     resumo["total"] = contagem["quente"] + contagem["fria"]
     return resumo
@@ -439,6 +439,13 @@ class ExportadorProposta:
             c.roundRect(x, y, w, h, 6, fill=1, stroke=1)
 
     @staticmethod
+    def _baseline_centrada(box_bottom, box_height, font_name, font_size):
+        """Baseline para o texto ficar verticalmente centralizado na caixa."""
+        asc = pdfmetrics.getAscent(font_name) / 1000.0 * font_size
+        desc = abs(pdfmetrics.getDescent(font_name)) / 1000.0 * font_size
+        return box_bottom + (box_height - (asc + desc)) / 2 + desc
+
+    @staticmethod
     def _badge(c, x, y_topo, texto, cor):
         """Etiqueta sobre o topo de uma caixa."""
         c.setFillColor(cor)
@@ -447,7 +454,10 @@ class ExportadorProposta:
         c.roundRect(x + 10, y_topo - h_texto - 4, w_texto, h_texto, 4, fill=1, stroke=0)
         c.setFillColor(BRANCO)
         c.setFont("Helvetica-Bold", 10)
-        c.drawCentredString(x + 10 + w_texto / 2, y_topo - h_texto / 2 - 4, texto)
+        baseline = ExportadorProposta._baseline_centrada(
+            y_topo - h_texto - 4, h_texto, "Helvetica-Bold", 10
+        )
+        c.drawCentredString(x + 10 + w_texto / 2, baseline, texto)
 
     @staticmethod
     def _placeholder_3d(c, x, y, w, h):
@@ -486,7 +496,10 @@ class ExportadorProposta:
             c.roundRect(xc + 10, y + h - 26, largura - 20, 20, 4, fill=1, stroke=0)
             c.setFillColor(BRANCO)
             c.setFont("Helvetica-Bold", 10.5)
-            c.drawCentredString(xc + largura / 2, y + h - 16.5, titulo)
+            baseline_titulo = ExportadorProposta._baseline_centrada(
+                y + h - 26, 20, "Helvetica-Bold", 10.5
+            )
+            c.drawCentredString(xc + largura / 2, baseline_titulo, titulo)
             # Itens
             c.setFillColor(TEXTO)
             c.setFont("Helvetica", 9.5)
@@ -618,18 +631,26 @@ class ExportadorProposta:
             c.setFont("Helvetica-Bold", 10)
             c.drawCentredString(cx, area_topo - 12, medida)
 
-            # Imagem da travessa abaixo da medida
+            # Imagem da travessa abaixo da medida, na proporção real (dw:dh)
             imagem = "panela_redonda.png" if fmt == "circulo" else "panela_retangular.png"
             caminho = os.path.join(PASTA_ASSETS, imagem)
             max_w = larg_cel - 16
             max_h = area_h - 22
+            razao = (dw or 1) / (dh or 1)
+            if razao >= 1:
+                dw_im = max_w
+                dh_im = max_w / razao
+                if dh_im > max_h:
+                    dh_im = max_h
+                    dw_im = max_h * razao
+            else:
+                dh_im = max_h
+                dw_im = max_h * razao
+                if dw_im > max_w:
+                    dw_im = max_w
+                    dh_im = max_w / razao
             if os.path.exists(caminho):
                 try:
-                    reader = ImageReader(caminho)
-                    iw, ih = reader.getSize()
-                    escala = min(max_w / iw, max_h / ih)
-                    dw_im = iw * escala
-                    dh_im = ih * escala
                     c.drawImage(
                         caminho,
                         cx - dw_im / 2,
@@ -642,7 +663,7 @@ class ExportadorProposta:
                     print(f" > [Proposta] Falha ao desenhar travessa {medida}: {e}")
             else:
                 c.setFillColor(CINZA_CLARO)
-                c.rect(cx - max_w / 2, area_base, max_w, max_h, fill=1, stroke=0)
+                c.rect(cx - dw_im / 2, area_base, dw_im, dh_im, fill=1, stroke=0)
 
         if len(dims) > 8:
             c.setFillColor(colors.HexColor("#6B7280"))
@@ -651,7 +672,16 @@ class ExportadorProposta:
 
     @staticmethod
     def _desenhar_resumo_pistas(c, x, y, w, h, resumo):
-        """Box final (largura total) com tamanho e nº de travessas de cada pista."""
+        """Box final (largura total) com tamanho e nº de travessas de cada pista.
+
+        Cada pista aparece como "[ícone] Pista Aquecida (LxP): N travessas",
+        separadas por "|", com o Total ao final. Pistas sem itens não aparecem.
+        """
+        ExportadorProposta._caixa(c, x, y, w, h, preencher=True)
+
+        ICONE = 18
+        GAP_ICONE = 7
+        GAP = 14
 
         def _rotulo(pista: str) -> str:
             nome = "Pista Aquecida" if pista == "quente" else "Pista Fria"
@@ -667,20 +697,101 @@ class ExportadorProposta:
         texto_total = f"Total: {total} travessa{plural}"
 
         c.setFont("Helvetica-Bold", 11)
-        tq = _rotulo("quente")
-        tf = _rotulo("fria")
-        tt = texto_total
-        w_q = c.stringWidth(tq, "Helvetica-Bold", 11)
-        w_f = c.stringWidth(tf, "Helvetica-Bold", 11)
-        w_t = c.stringWidth(tt, "Helvetica-Bold", 11)
-        gap = 24
-        total_w = w_q + w_f + w_t + 2 * gap
+        separador = "|"
+        w_sep = c.stringWidth(separador, "Helvetica-Bold", 11)
+        w_total = c.stringWidth(texto_total, "Helvetica-Bold", 11)
+
+        pistas = [p for p in ("quente", "fria") if p in resumo]
+        larguras = {p: c.stringWidth(_rotulo(p), "Helvetica-Bold", 11) for p in pistas}
+
+        total_w = (
+            sum(ICONE + GAP_ICONE + larguras[p] for p in pistas)
+            + w_total
+            + len(pistas) * (w_sep + 2 * GAP)
+        )
         x0 = x + max(14, (w - total_w) / 2)
         cy = y + h / 2
+        baseline = ExportadorProposta._baseline_centrada(y, h, "Helvetica-Bold", 11)
+        cor_sep = colors.HexColor("#9CA3AF")
 
-        c.setFillColor(LARANJA)
-        c.drawString(x0, cy, tq)
-        c.setFillColor(AZUL)
-        c.drawString(x0 + w_q + gap, cy, tf)
+        xc = x0
+        for pista in pistas:
+            if pista == "quente":
+                ExportadorProposta._icone_pista_aquecida(c, xc + ICONE / 2, cy, size=ICONE)
+                c.setFillColor(LARANJA)
+            else:
+                ExportadorProposta._icone_pista_fria(c, xc + ICONE / 2, cy, size=ICONE)
+                c.setFillColor(AZUL)
+
+            x_texto = xc + ICONE + GAP_ICONE
+            c.drawString(x_texto, baseline, _rotulo(pista))
+            xc += ICONE + GAP_ICONE + larguras[pista] + GAP
+
+            c.setFillColor(cor_sep)
+            c.drawCentredString(xc + w_sep / 2, baseline, separador)
+            xc += w_sep + GAP
+
         c.setFillColor(GRAFITE)
-        c.drawString(x0 + w_q + gap + w_f + gap, cy, tt)
+        c.drawString(xc, baseline, texto_total)
+
+    @staticmethod
+    def _icone_pista_aquecida(c, cx, cy, size=18):
+        """Reproduz o SVG IconePistaAquecida (aquecedor com vapor)."""
+        c.saveState()
+        c.translate(cx - size / 2, cy - size / 2)
+        c.scale(size / 100.0, size / 100.0)
+
+        # Base retangular arredondada (aquecedor)
+        c.setFillColor(colors.HexColor("#E65100"))
+        c.setStrokeColor(colors.HexColor("#FF9800"))
+        c.setLineWidth(2)
+        c.roundRect(15, 20, 70, 20, 6, fill=1, stroke=1)
+
+        # Linhas de vapor/fumaça sobre a base
+        c.setStrokeColor(colors.HexColor("#FFC107"))
+        c.setLineWidth(3)
+        c.setLineCap(1)
+        for inicio, c1, c2, fim in (
+            ((35, 85), (30, 75), (40, 65), (35, 50)),
+            ((50, 90), (45, 80), (55, 70), (50, 55)),
+            ((65, 85), (60, 75), (70, 65), (65, 50)),
+        ):
+            caminho = c.beginPath()
+            caminho.moveTo(*inicio)
+            caminho.curveTo(*c1, *c2, *fim)
+            c.drawPath(caminho, stroke=1, fill=0)
+
+        c.restoreState()
+
+    @staticmethod
+    def _icone_pista_fria(c, cx, cy, size=18):
+        """Reproduz o SVG IconePistaFria (floco de neve central, sem círculo)."""
+        c.saveState()
+        c.translate(cx - size / 2, cy - size / 2)
+        c.scale(size / 24.0, size / 24.0)
+
+        cor = colors.HexColor("#0277BD")
+        c.setStrokeColor(cor)
+
+        # Cruz principal
+        c.setLineWidth(2)
+        c.line(12, 6, 12, 18)
+        c.line(6, 12, 18, 12)
+
+        # Diagonais
+        c.setLineWidth(1.5)
+        c.line(7.75, 7.75, 16.25, 16.25)
+        c.line(7.75, 16.25, 16.25, 7.75)
+
+        # Detalhes das ramificações ("V" nas pontas)
+        c.setLineWidth(1.5)
+        c.line(10, 7, 12, 5)
+        c.line(12, 5, 14, 7)
+        c.line(10, 17, 12, 19)
+        c.line(12, 19, 14, 17)
+        c.line(7, 14, 5, 12)
+        c.line(5, 12, 7, 10)
+        c.line(17, 14, 19, 12)
+        c.line(19, 12, 17, 10)
+
+        c.restoreState()
