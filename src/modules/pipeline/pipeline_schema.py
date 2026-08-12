@@ -19,6 +19,9 @@ class SecaoPipeline(BaseModel):
     tipo: str = Field(min_length=1, description="Classe da seção (ver /api/schemas)")
     nome: str = Field(min_length=1)
     pct_largura_alvo: float = Field(default=1.0, gt=0, le=1)
+    pista: Literal["fria", "quente"] = Field(
+        default="quente", description="Pista fria ou quente desta seção"
+    )
     parametros: Dict[str, Any] = Field(default_factory=dict)
 
 

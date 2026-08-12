@@ -71,6 +71,8 @@ def construir_pipeline_desde_json(json_config, pedido):
         ):
             instancia_secao.pct_largura_alvo = pct_alvo
 
+        instancia_secao.pista = config_secao.get("pista", "quente")
+
         modulo.adicionar_secao(instancia_secao)
 
     modulo.processar_layout(cat_completo_global)

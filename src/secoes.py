@@ -9,6 +9,7 @@ class Secao(ABC):
     def __init__(self, nome, pct_largura_alvo=1.0):
         self.nome = nome
         self.pct_largura_alvo = pct_largura_alvo
+        self.pista = "quente"
 
     def buscar_melhor_combinacao_vertical(self, catalogo, altura_maxima, espaco):
         """Busca combinações verticais maximizando a altura usada de forma precisa."""
