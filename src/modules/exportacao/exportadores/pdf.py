@@ -19,6 +19,8 @@ print(f" > Buscando assets em: {PASTA_ASSETS}")
 
 TITULO_PADRAO = "Self-Service Quente"
 
+GAP_PLACAS = 1.0  # cm de espaçamento entre placas (multiplacas)
+
 
 class ExportadorPDF:
     @staticmethod
@@ -36,11 +38,13 @@ class ExportadorPDF:
         ESCALA = 0.1  # Escala 1:10
 
         # --- 1. CÁLCULO DA LARGURA DINÂMICA DA PÁGINA ---
-        # Encontra o maior comprimento (L) entre todos os módulos de todos os pedidos
-        maior_comprimento_balcao_cm = max(
-            modulo.engine.L for pedido in pedidos for modulo in pedido.modulos
-        )
-        largura_balcao_no_pdf = maior_comprimento_balcao_cm * cm * ESCALA
+        # Largura total do grupo de placas de cada pedido (soma das larguras + gaps)
+        def _largura_total_pedido(pedido):
+            larguras = [modulo.engine.L for modulo in pedido.modulos]
+            return sum(larguras) + GAP_PLACAS * (len(larguras) - 1)
+
+        maior_largura_cm = max(_largura_total_pedido(p) for p in pedidos)
+        largura_balcao_no_pdf = maior_largura_cm * cm * ESCALA
 
         # Define uma folga de segurança de 20cm reais no PDF (10cm de cada lado para as cotas e respiro)
         largura_calculada_pdf = largura_balcao_no_pdf + (20.0 * cm)
@@ -227,15 +231,20 @@ class ExportadorPDF:
         c.line(w_page / 2 - 5 * cm, topo_atual_y, w_page / 2 + 5 * cm, topo_atual_y)
         topo_atual_y -= 0.8 * cm
 
-        # --- 6. DESENHO DO BALCÃO E SEUS COMPONENTES ---
+        # --- 6. DESENHO DO BALCÃO E SEUS COMPONENTES (placas lado a lado) ---
         offset_y = 2.0 * cm
 
-        for modulo in pedido.modulos:
-            largura_real = modulo.engine.L * cm * ESCALA
-            altura_real = modulo.engine.P * cm * ESCALA
+        modulos = pedido.modulos
+        larguras_reais = [m.engine.L * cm * ESCALA for m in modulos]
+        alturas_reais = [m.engine.P * cm * ESCALA for m in modulos]
+        gap_real = GAP_PLACAS * cm * ESCALA
+        largura_grupo = sum(larguras_reais) + gap_real * (len(modulos) - 1)
+        x_atual = (w_page - largura_grupo) / 2
 
-            # Recalcula o offset_x dinamicamente para o centro da nova página expandida
-            offset_x = (w_page - largura_real) / 2
+        for indice, modulo in enumerate(modulos):
+            largura_real = larguras_reais[indice]
+            altura_real = alturas_reais[indice]
+            offset_x = x_atual
 
             ExportadorPDF._desenhar_balcao(
                 c, modulo, offset_x, offset_y, ESCALA, exibir_texto=True
@@ -243,7 +252,7 @@ class ExportadorPDF:
 
             # --- 7. RÉGUAS MÉTRICAS (COTAS) ---
 
-            # 7.1. Régua de Largura (Horizontal Inferior)
+            # 7.1. Régua de Largura (Horizontal Inferior) — abaixo de cada placa
             chave_y = offset_y - 1.0 * cm
             c.setStrokeColor(black)
             c.setLineWidth(1.5)
@@ -259,25 +268,28 @@ class ExportadorPDF:
             c.drawCentredString(
                 offset_x + largura_real / 2,
                 chave_y - 0.6 * cm,
-                f"{modulo.engine.L}cm",
+                f"{modulo.engine.L:g}cm",
             )
 
-            # 7.2. Régua de Profundidade (Vertical Direita)
-            chave_x = offset_x + largura_real + 0.5 * cm
-            c.setStrokeColor(black)
-            c.setLineWidth(1.5)
-            c.line(chave_x, offset_y, chave_x, offset_y + altura_real)
-            c.line(
-                chave_x - 0.2 * cm,
-                offset_y + altura_real,
-                chave_x + 0.2 * cm,
-                offset_y + altura_real,
-            )
-            c.line(chave_x - 0.2 * cm, offset_y, chave_x + 0.2 * cm, offset_y)
+            # 7.2. Régua de Profundidade (Vertical Direita) — altura única no fim
+            if indice == len(modulos) - 1:
+                chave_x = offset_x + largura_real + 0.5 * cm
+                c.setStrokeColor(black)
+                c.setLineWidth(1.5)
+                c.line(chave_x, offset_y, chave_x, offset_y + altura_real)
+                c.line(
+                    chave_x - 0.2 * cm,
+                    offset_y + altura_real,
+                    chave_x + 0.2 * cm,
+                    offset_y + altura_real,
+                )
+                c.line(chave_x - 0.2 * cm, offset_y, chave_x + 0.2 * cm, offset_y)
 
-            c.saveState()
-            c.translate(chave_x + 0.6 * cm, offset_y + altura_real / 2)
-            c.rotate(90)
-            c.setFont("Helvetica-Bold", 14)
-            c.drawCentredString(0, 0, f"{modulo.engine.P}cm")
-            c.restoreState()
+                c.saveState()
+                c.translate(chave_x + 0.6 * cm, offset_y + altura_real / 2)
+                c.rotate(90)
+                c.setFont("Helvetica-Bold", 14)
+                c.drawCentredString(0, 0, f"{modulo.engine.P:g}cm")
+                c.restoreState()
+
+            x_atual += largura_real + gap_real

@@ -23,6 +23,8 @@ print(f" > Buscando assets em: {PASTA_ASSETS}")
 
 TITULO_PADRAO = "Self-Service Quente"
 
+GAP_PLACAS = 1.0  # cm de espaçamento entre placas (multiplacas)
+
 
 class ExportadorPPTX:
     @staticmethod
@@ -43,11 +45,13 @@ class ExportadorPPTX:
         ESCALA = 0.1
 
         # --- CALCULAR LARGURA DINÂMICA DO SLIDE ---
-        # Encontra o maior comprimento (L) entre os módulos de todos os pedidos
-        maior_comprimento_balcao_cm = max(
-            modulo.engine.L for pedido in pedidos for modulo in pedido.modulos
-        )
-        largura_balcao_no_slide = maior_comprimento_balcao_cm * ESCALA
+        # Largura total do grupo de placas de cada pedido (soma + gaps)
+        def _largura_total_pedido(pedido):
+            larguras = [modulo.engine.L for modulo in pedido.modulos]
+            return sum(larguras) + GAP_PLACAS * (len(larguras) - 1)
+
+        maior_largura_cm = max(_largura_total_pedido(p) for p in pedidos)
+        largura_balcao_no_slide = maior_largura_cm * ESCALA
 
         # Adiciona uma margem de segurança de 20cm (10cm de cada lado para as cotas/textos)
         largura_calculada_slide = Cm(largura_balcao_no_slide + 20.0)
@@ -121,12 +125,18 @@ class ExportadorPPTX:
             tf_titulo.paragraphs[1].font.underline = True
             tf_titulo.paragraphs[1].font.italic = True
 
-        for modulo in pedido.modulos:
-            largura_real = Cm(modulo.engine.L * ESCALA)
-            altura_real = Cm(modulo.engine.P * ESCALA)
+        # --- Desenho das placas lado a lado ---
+        modulos = pedido.modulos
+        larguras_reais = [Cm(m.engine.L * ESCALA) for m in modulos]
+        alturas_reais = [Cm(m.engine.P * ESCALA) for m in modulos]
+        gap_real = Cm(GAP_PLACAS * ESCALA)
+        largura_grupo = sum(larguras_reais) + gap_real * (len(modulos) - 1)
+        x_atual = (prs.slide_width - largura_grupo) / 2
 
-            # Centralização dinâmica baseada na nova escala responsiva do slide
-            offset_x = (prs.slide_width - largura_real) / 2
+        for indice, modulo in enumerate(modulos):
+            largura_real = larguras_reais[indice]
+            altura_real = alturas_reais[indice]
+            offset_x = x_atual
             offset_y = Cm(7)
 
             # --- 3. DESENHO DO BALCÃO ---
@@ -244,37 +254,40 @@ class ExportadorPPTX:
                 offset_x, target_y + Cm(0.6), largura_real, Cm(1.5)
             )
             p_larg = tx_largura.text_frame.paragraphs[0]
-            p_larg.text = f"{modulo.engine.L}cm"
+            p_larg.text = f"{modulo.engine.L:g}cm"
             p_larg.alignment = PP_ALIGN.CENTER
             p_larg.font.bold = True
             p_larg.font.size = Pt(16)
 
-            # 5.2. Chave Lateral Direita (Profundidade)
-            chave_dir = slide.shapes.add_shape(
-                MSO_SHAPE.RIGHT_BRACE,
-                offset_x + largura_real + Cm(0.2),
-                offset_y,
-                Cm(0.8),
-                altura_real,
-            )
-            chave_dir.fill.background()
-            chave_dir.line.color.rgb = RGBColor(0, 0, 0)
-            chave_dir.line.width = Pt(1.5)
+            # 5.2. Chave Lateral Direita (Profundidade) — altura única no fim
+            if indice == len(modulos) - 1:
+                chave_dir = slide.shapes.add_shape(
+                    MSO_SHAPE.RIGHT_BRACE,
+                    offset_x + largura_real + Cm(0.2),
+                    offset_y,
+                    Cm(0.8),
+                    altura_real,
+                )
+                chave_dir.fill.background()
+                chave_dir.line.color.rgb = RGBColor(0, 0, 0)
+                chave_dir.line.width = Pt(1.5)
 
-            tx_prof = slide.shapes.add_textbox(
-                offset_x + largura_real + Cm(1.0), offset_y, Cm(3), altura_real
-            )
-            tf_prof = tx_prof.text_frame
-            tf_prof.word_wrap = False
-            tf_prof.vertical_anchor = MSO_ANCHOR.MIDDLE
+                tx_prof = slide.shapes.add_textbox(
+                    offset_x + largura_real + Cm(1.0), offset_y, Cm(3), altura_real
+                )
+                tf_prof = tx_prof.text_frame
+                tf_prof.word_wrap = False
+                tf_prof.vertical_anchor = MSO_ANCHOR.MIDDLE
 
-            tf_prof.margin_top = Cm(0)
-            tf_prof.margin_bottom = Cm(0)
-            tf_prof.margin_left = Cm(0.1)
-            tf_prof.margin_right = Cm(0)
+                tf_prof.margin_top = Cm(0)
+                tf_prof.margin_bottom = Cm(0)
+                tf_prof.margin_left = Cm(0.1)
+                tf_prof.margin_right = Cm(0)
 
-            p_prof = tx_prof.text_frame.paragraphs[0]
-            p_prof.text = f"{modulo.engine.P}cm"
-            p_prof.alignment = PP_ALIGN.LEFT
-            p_prof.font.bold = True
-            p_prof.font.size = Pt(16)
+                p_prof = tx_prof.text_frame.paragraphs[0]
+                p_prof.text = f"{modulo.engine.P:g}cm"
+                p_prof.alignment = PP_ALIGN.LEFT
+                p_prof.font.bold = True
+                p_prof.font.size = Pt(16)
+
+            x_atual += largura_real + gap_real

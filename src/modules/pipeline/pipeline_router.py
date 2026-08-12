@@ -63,13 +63,18 @@ def processar_pipeline_v1(dados: ProcessarLayoutRequest) -> ProcessarV1Response:
             status_code=500, detail=f"Erro no processamento: {e}"
         ) from e
 
-    modulo = pedido.modulos[0]
+    # Multiplacas: combina os itens das placas e informa as larguras de cada
+    # placa para o render 3D (placas juntas). Se for uma única placa, mantém.
+    itens_combinados, largura_total, profundidade, larguras_placas = (
+        pipeline_service.combinar_modulos_pedido(pedido)
+    )
 
     return ProcessarV1Response(
         pdf_base64=pipeline_service.ler_arquivo_base64(caminho_pdf),
         nome_arquivo_pdf=f"layout_{nome_slug}.pdf",
         nome_slug=nome_slug,
-        largura_balcao_cm=modulo.engine.L,
-        profundidade_balcao_cm=modulo.engine.P,
-        itens=[ItemLayout(**item) for item in modulo.engine.itens],
+        largura_balcao_cm=largura_total,
+        profundidade_balcao_cm=profundidade,
+        itens=[ItemLayout(**item) for item in itens_combinados],
+        modulos_balcao_cm=larguras_placas if len(pedido.modulos) > 1 else [],
     )

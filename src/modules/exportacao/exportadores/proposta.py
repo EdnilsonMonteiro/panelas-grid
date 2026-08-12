@@ -48,6 +48,8 @@ LARANJA_FUNDO = colors.HexColor("#FFF1E6")
 AZUL = colors.HexColor("#0E7490")         # Pista Fria (azul/água)
 AZUL_FUNDO = colors.HexColor("#E6F5F8")
 
+GAP_PLACAS_CM = 1.0  # espaçamento entre placas (multiplacas)
+
 # ─────────────────────────────────────────────────────
 # ESTILOS DE TEXTO
 # ─────────────────────────────────────────────────────
@@ -113,23 +115,26 @@ def _nome_e_tamanho(item, diametro_panela):
 
 
 def _composicao(pedido) -> Dict[str, List[str]]:
-    """Agrupa os modelos alocados por pista (quente/fria), com nome e tamanho."""
-    modulo = pedido.modulos[0]
-    secao_pista = {s.nome: s.pista for s in modulo.secoes}
-
-    # Mapa diâmetro -> nome da panela redonda (a partir do catálogo da seção)
+    """Agrupa os modelos alocados por pista (quente/fria), somando as placas."""
     diametro_panela: Dict[float, str] = {}
-    for secao in modulo.secoes:
-        catalogo_panelas = getattr(secao, "catalogo_panelas", None) or []
-        for item_cat in catalogo_panelas:
-            d = item_cat.get("diametro") or item_cat.get("w") or 0
-            if d:
-                diametro_panela[float(d)] = item_cat.get("nome") or f"Panela {float(d):.0f}"
-
     contagem: Dict[str, Counter] = {"quente": Counter(), "fria": Counter()}
-    for item in modulo.engine.itens:
-        pista = secao_pista.get(item.get("secao"), "quente")
-        contagem[pista][_nome_e_tamanho(item, diametro_panela)] += 1
+
+    for modulo in pedido.modulos:
+        secao_pista = {s.nome: s.pista for s in modulo.secoes}
+
+        # Mapa diâmetro -> nome da panela redonda (a partir do catálogo da seção)
+        for secao in modulo.secoes:
+            catalogo_panelas = getattr(secao, "catalogo_panelas", None) or []
+            for item_cat in catalogo_panelas:
+                d = item_cat.get("diametro") or item_cat.get("w") or 0
+                if d:
+                    diametro_panela[float(d)] = (
+                        item_cat.get("nome") or f"Panela {float(d):.0f}"
+                    )
+
+        for item in modulo.engine.itens:
+            pista = secao_pista.get(item.get("secao"), "quente")
+            contagem[pista][_nome_e_tamanho(item, diametro_panela)] += 1
 
     def _formatar(pista: str) -> List[str]:
         return [
@@ -143,29 +148,37 @@ def _composicao(pedido) -> Dict[str, List[str]]:
 def _resumo_pistas(pedido) -> Dict[str, Any]:
     """Tamanho (LxP) e quantidade de travessas de cada pista, e o total.
 
-    O comprimento de cada pista é a extensão real ocupada pelos itens
-    (a soma das pistas corresponde ao comprimento total do balcão).
+    O comprimento de cada pista é a extensão real ocupada pelos itens somando
+    todas as placas (as placas são dispostas lado a lado com um gap).
     Pistas sem itens não são incluídas no resumo.
     """
-    modulo = pedido.modulos[0]
-    secao_pista = {s.nome: s.pista for s in modulo.secoes}
-
-    extensoes: Dict[str, List[Tuple[float, float]]] = {"quente": [], "fria": []}
+    x_min_total: Dict[str, Optional[float]] = {"quente": None, "fria": None}
+    x_max_total: Dict[str, Optional[float]] = {"quente": None, "fria": None}
     contagem: Dict[str, int] = {"quente": 0, "fria": 0}
-    for item in modulo.engine.itens:
-        pista = secao_pista.get(item.get("secao"), "quente")
-        extensoes[pista].append((item["x"], item["x"] + item["w"]))
-        contagem[pista] += 1
+    profundidade = 0.0
 
-    profundidade = modulo.engine.P
+    x_deslocamento = 0.0
+    for modulo in pedido.modulos:
+        profundidade = max(profundidade, modulo.engine.P)
+        secao_pista = {s.nome: s.pista for s in modulo.secoes}
+        for item in modulo.engine.itens:
+            pista = secao_pista.get(item.get("secao"), "quente")
+            contagem[pista] += 1
+            x0 = x_deslocamento + item["x"]
+            x1 = x_deslocamento + item["x"] + item["w"]
+            if x_min_total[pista] is None or x0 < x_min_total[pista]:
+                x_min_total[pista] = x0
+            if x_max_total[pista] is None or x1 > x_max_total[pista]:
+                x_max_total[pista] = x1
+        x_deslocamento += modulo.engine.L + GAP_PLACAS_CM
+
     resumo: Dict[str, Any] = {}
     for pista in ("quente", "fria"):
-        if not extensoes[pista]:
+        if x_min_total[pista] is None:
             continue
-        x_min = min(e[0] for e in extensoes[pista])
-        x_max = max(e[1] for e in extensoes[pista])
+        compr = x_max_total[pista] - x_min_total[pista]
         resumo[pista] = {
-            "tamanho": f"{x_max - x_min:.0f}x{profundidade:.0f}",
+            "tamanho": f"{compr:.0f}x{profundidade:.0f}",
             "qtd": contagem[pista],
         }
 
@@ -174,15 +187,15 @@ def _resumo_pistas(pedido) -> Dict[str, Any]:
 
 
 def _dimensoes_utilizadas(pedido) -> List[Tuple[str, int, int, int]]:
-    """Dimensões únicas (formato, w, h) das travessas, por frequência."""
-    modulo = pedido.modulos[0]
+    """Dimensões únicas (formato, w, h) das travessas, por frequência (todas as placas)."""
     contagem: Counter = Counter()
-    for item in modulo.engine.itens:
-        fmt = item.get("formato", "retangulo")
-        w = int(round(item.get("w", 0)))
-        h = int(round(item.get("h", 0)))
-        if w > 0 and h > 0:
-            contagem[(fmt, w, h)] += 1
+    for modulo in pedido.modulos:
+        for item in modulo.engine.itens:
+            fmt = item.get("formato", "retangulo")
+            w = int(round(item.get("w", 0)))
+            h = int(round(item.get("h", 0)))
+            if w > 0 and h > 0:
+                contagem[(fmt, w, h)] += 1
     ordenadas = sorted(contagem, key=lambda c: (-contagem[c], c[1], c[2]))
     return [(fmt, w, h, contagem[(fmt, w, h)]) for fmt, w, h in ordenadas]
 
@@ -581,23 +594,36 @@ class ExportadorProposta:
         c.setFont("Helvetica-Bold", 9)
         c.drawCentredString(x + w / 2, y + h - 13, rotulo)
 
-        modulo = pedido.modulos[0]
-        L, P = modulo.engine.L, modulo.engine.P
-        if L <= 0 or P <= 0:
+        modulos = pedido.modulos
+        if not modulos:
+            return
+        L_total = sum(m.engine.L for m in modulos) + GAP_PLACAS_CM * (len(modulos) - 1)
+        P_max = max(m.engine.P for m in modulos)
+        if L_total <= 0 or P_max <= 0:
             return
 
         pad = 6
         util_w = w - 2 * pad
         util_h = h - 20 - pad
-        escala = min(util_w / (L * cm), util_h / (P * cm))
-        plan_w = L * cm * escala
-        plan_h = P * cm * escala
+        escala = min(util_w / (L_total * cm), util_h / (P_max * cm))
+        plan_w = L_total * cm * escala
+        plan_h = P_max * cm * escala
         ox = x + (w - plan_w) / 2
         oy = y + pad
 
-        ExportadorPDF._desenhar_balcao(
-            c, modulo, ox, oy, escala, exibir_texto=True, tamanho_texto=5.5
-        )
+        x_atual = ox
+        for modulo in modulos:
+            largura_placa = modulo.engine.L * cm * escala
+            ExportadorPDF._desenhar_balcao(
+                c,
+                modulo,
+                x_atual,
+                oy,
+                escala,
+                exibir_texto=True,
+                tamanho_texto=5.5,
+            )
+            x_atual += largura_placa + GAP_PLACAS_CM * cm * escala
 
     @staticmethod
     def _desenhar_dimensoes(c, x, y, w, h, dims):

@@ -4,6 +4,7 @@ from typing import Any, Dict, List
 
 from modules.pipeline.pipeline_schema import (
     ConfiguracaoBalcao,
+    ModuloConfig,
     SecaoPipeline,
 )
 from pydantic import BaseModel, Field, field_validator
@@ -36,6 +37,9 @@ class LayoutPedidoEntrada(BaseModel):
     titulo: str = Field(default="Self-Service Quente")
     configuracao_balcao: ConfiguracaoBalcao
     pipeline_secoes: List[SecaoPipeline] = Field(min_length=1)
+    modulos: List[ModuloConfig] = Field(
+        default_factory=list, description="Multiplacas da opção (opcional)"
+    )
 
 
 class LayoutPedidoResposta(BaseModel):
@@ -46,6 +50,7 @@ class LayoutPedidoResposta(BaseModel):
     titulo: str
     configuracao_balcao: Dict[str, Any]
     pipeline_secoes: List[Dict[str, Any]]
+    modulos: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class PedidoListaResposta(BaseModel):

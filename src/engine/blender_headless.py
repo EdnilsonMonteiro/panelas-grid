@@ -35,6 +35,8 @@ DIRETORIO_GLB_PADRAO = os.path.join(RAIZ_PROJETO, "assets", "glb")
 MARCADOR_SUCESSO = "[RENDER_3D_OK]"
 MARCADOR_METRICAS = "[RENDER_METRICS_JSON]"
 
+GAP_PLACAS_CM = 1.0  # espaçamento entre placas (multiplacas)
+
 
 class BlenderNaoEncontradoError(RuntimeError):
     """Levantada quando o executável do Blender não está disponível."""
@@ -168,6 +170,20 @@ def montar_job_render(
             }
         )
 
+    # Multiplacas: desenha N balcões lado a lado (larguras de cada placa)
+    placas = []
+    if modulos_balcao_cm:
+        x_acumulado = 0.0
+        for largura in modulos_balcao_cm:
+            placas.append(
+                {
+                    "largura_m": round(largura / 100.0, 4),
+                    "profundidade_m": round(profundidade_balcao_cm / 100.0, 4),
+                    "offset_x_m": round(x_acumulado / 100.0, 4),
+                }
+            )
+            x_acumulado += largura + GAP_PLACAS_CM
+
     return {
         "template_path": template_path,
         "output_path": os.path.abspath(caminho_saida_png),
@@ -178,6 +194,7 @@ def montar_job_render(
             "altura_m": z_tampo_m,
             "espessura_tampo_m": round(espessura_tampo_cm / 100.0, 4),
         },
+        "placas": placas,
         "camera": {
             "angulo_elevacao_graus": float(angulo_camera_graus),
             # Cotas projetam ~0,4 m além das faces do balcão: margem extra

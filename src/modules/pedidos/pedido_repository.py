@@ -88,7 +88,8 @@ def listar_layouts(conn: sqlite3.Connection, pedido_id: int) -> List[Dict[str, A
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT id, opcao_numero, titulo, configuracao_balcao, pipeline_secoes
+        SELECT id, opcao_numero, titulo, configuracao_balcao, pipeline_secoes,
+               modulos_json
         FROM layouts_pedido
         WHERE pedido_id = ?
         ORDER BY opcao_numero ASC, id ASC
@@ -115,16 +116,25 @@ def inserir_layout(
     titulo: str,
     configuracao_balcao_json: str,
     pipeline_secoes_json: str,
+    modulos_json: Optional[str] = None,
 ) -> int:
     """Insere um novo layout no pedido e devolve o id gerado."""
     cursor = conn.cursor()
     cursor.execute(
         """
         INSERT INTO layouts_pedido
-            (pedido_id, opcao_numero, titulo, configuracao_balcao, pipeline_secoes)
-        VALUES (?, ?, ?, ?, ?)
+            (pedido_id, opcao_numero, titulo, configuracao_balcao,
+             pipeline_secoes, modulos_json)
+        VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (pedido_id, opcao_numero, titulo, configuracao_balcao_json, pipeline_secoes_json),
+        (
+            pedido_id,
+            opcao_numero,
+            titulo,
+            configuracao_balcao_json,
+            pipeline_secoes_json,
+            modulos_json,
+        ),
     )
     return int(cursor.lastrowid)
 
@@ -134,7 +144,8 @@ def obter_layout(conn: sqlite3.Connection, layout_id: int) -> Optional[Dict[str,
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT id, pedido_id, opcao_numero, titulo, configuracao_balcao, pipeline_secoes
+        SELECT id, pedido_id, opcao_numero, titulo, configuracao_balcao,
+               pipeline_secoes, modulos_json
         FROM layouts_pedido WHERE id = ?
         """,
         (layout_id,),

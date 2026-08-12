@@ -21,9 +21,26 @@ REGISTRO_SECOES = {
 
 
 def construir_pipeline_desde_json(json_config, pedido):
+    """Monta o(s) módulo(s) do pedido a partir do JSON enviado pela UI.
+
+    Se `json_config["modulos"]` (multiplacas) estiver preenchido, cria uma
+    placa (`ModuloBalcao`) por entrada; caso contrário, cria uma única placa
+    a partir de `configuracao_balcao` + `pipeline_secoes` (compatibilidade).
+    """
+    cat_completo_global = carregar_catalogo_por_nome("catalogo_mestre")
+    modulos = json_config.get("modulos") or []
+    if modulos:
+        for modulo_config in modulos:
+            _construir_modulo(pedido, modulo_config, cat_completo_global)
+    else:
+        _construir_modulo(pedido, json_config, cat_completo_global)
+    return pedido
+
+
+def _construir_modulo(pedido, json_config, cat_completo_global):
+    """Monta um único módulo (placa) e processa suas seções."""
     conf_balcao = json_config["configuracao_balcao"]
 
-    cat_completo_global = carregar_catalogo_por_nome("catalogo_mestre")
     espacamento_ui = conf_balcao.get("espaco", 0.5)
     print(f"Espaçamento UI: {espacamento_ui}")
 
@@ -76,5 +93,3 @@ def construir_pipeline_desde_json(json_config, pedido):
         modulo.adicionar_secao(instancia_secao)
 
     modulo.processar_layout(cat_completo_global)
-
-    return pedido

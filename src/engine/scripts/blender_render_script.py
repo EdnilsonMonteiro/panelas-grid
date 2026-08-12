@@ -646,10 +646,12 @@ def configurar_parede(conf_balcao):
     return parede
 
 
-def _configurar_balcao_glb(conf_balcao, caminho_glb):
+def _configurar_balcao_glb(conf_balcao, caminho_glb, offset_x_m=0.0):
     """Balcão paramétrico: importa `balcao.glb` e redimensiona X (largura) e
     Y (profundidade) para casar exatamente com o payload. Retorna o Z do tampo
-    (face superior da mesa escalada), referência para o Z das travessas."""
+    (face superior da mesa escalada), referência para o Z das travessas.
+
+    `offset_x_m` posiciona a placa no eixo X (multiplacas lado a lado)."""
     print(f" > Importando balcão paramétrico: {caminho_glb}")
     # Balcão genérico do template conflitaria com o modelo importado
     _remover_objeto("Balcao_Corpo")
@@ -670,7 +672,7 @@ def _configurar_balcao_glb(conf_balcao, caminho_glb):
     escala_y = conf_balcao["profundidade_m"] / dim_y
     raiz.scale = (escala_x, escala_y, 1.0)  # Z preserva a altura original do modelo
 
-    raiz.location = (-min_x * escala_x, -min_y * escala_y, -min_z)
+    raiz.location = (-min_x * escala_x + offset_x_m, -min_y * escala_y, -min_z)
 
     z_tampo = max_z  # escala Z = 1
     print(
@@ -681,7 +683,7 @@ def _configurar_balcao_glb(conf_balcao, caminho_glb):
     return z_tampo
 
 
-def _configurar_balcao_procedural(conf_balcao):
+def _configurar_balcao_procedural(conf_balcao, offset_x_m=0.0):
     """Fallback sem balcao.glb: corpo + tampo em cubos. Retorna o Z do tampo."""
     largura = conf_balcao["largura_m"]
     profundidade = conf_balcao["profundidade_m"]
@@ -699,14 +701,14 @@ def _configurar_balcao_procedural(conf_balcao):
     altura_corpo = max(altura - espessura_tampo, 0.01)
     obter_ou_criar_cubo(
         "Balcao_Corpo",
-        localizacao=(largura / 2.0, profundidade / 2.0, altura_corpo / 2.0),
+        localizacao=(largura / 2.0 + offset_x_m, profundidade / 2.0, altura_corpo / 2.0),
         dimensoes=(largura, profundidade, altura_corpo),
         material=mat_corpo,
     )
     obter_ou_criar_cubo(
         "Balcao_Tampo",
         localizacao=(
-            largura / 2.0,
+            largura / 2.0 + offset_x_m,
             profundidade / 2.0,
             altura - espessura_tampo / 2.0,
         ),
@@ -716,12 +718,28 @@ def _configurar_balcao_procedural(conf_balcao):
     return altura
 
 
-def configurar_balcao(conf_balcao, glb_dir):
-    """Monta o balcão (GLB paramétrico ou procedural) e retorna o Z do tampo."""
+def configurar_balcao(conf_balcao, glb_dir, placas=None):
+    """Monta o(s) balcão(ões) (GLB paramétrico ou procedural) e retorna o Z do tampo.
+
+    Com `placas` (multiplacas), cria um balcão por placa, lado a lado no eixo X."""
+    if not placas:
+        candidato = os.path.join(glb_dir, GLB_BALCAO) if glb_dir else None
+        if candidato and os.path.exists(candidato):
+            return _configurar_balcao_glb(conf_balcao, candidato)
+        return _configurar_balcao_procedural(conf_balcao)
+
     candidato = os.path.join(glb_dir, GLB_BALCAO) if glb_dir else None
-    if candidato and os.path.exists(candidato):
-        return _configurar_balcao_glb(conf_balcao, candidato)
-    return _configurar_balcao_procedural(conf_balcao)
+    z_max = 0.0
+    for placa in placas:
+        conf_placa = dict(conf_balcao)
+        conf_placa["largura_m"] = placa["largura_m"]
+        conf_placa["profundidade_m"] = placa["profundidade_m"]
+        if candidato and os.path.exists(candidato):
+            z = _configurar_balcao_glb(conf_placa, candidato, offset_x_m=placa["offset_x_m"])
+        else:
+            z = _configurar_balcao_procedural(conf_placa, offset_x_m=placa["offset_x_m"])
+        z_max = max(z_max, z)
+    return z_max
 
 
 def configurar_camera(conf_camera, conf_balcao):
@@ -1968,7 +1986,7 @@ def main():
     _registrar_metrica("environment_and_dimensions_sec", inicio)
 
     inicio = time.perf_counter()
-    z_tampo = configurar_balcao(job["balcao"], glb_dir)
+    z_tampo = configurar_balcao(job["balcao"], glb_dir, job.get("placas"))
     _registrar_metrica("balcao_setup_sec", inicio)
     _amostrar_memoria_pico()
 

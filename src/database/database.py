@@ -66,6 +66,13 @@ def inicializar_banco():
         )
     """)
 
+    # Migração: coluna de multiplacas (opções com várias placas)
+    colunas = [linha[1] for linha in cursor.execute("PRAGMA table_info(layouts_pedido)").fetchall()]
+    if "modulos_json" not in colunas:
+        cursor.execute(
+            "ALTER TABLE layouts_pedido ADD COLUMN modulos_json TEXT"
+        )
+
     conn.commit()
     conn.close()
     print(" > Banco de dados SQLite inicializado e verificado com sucesso.")

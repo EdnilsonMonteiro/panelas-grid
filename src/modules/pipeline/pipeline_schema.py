@@ -25,12 +25,31 @@ class SecaoPipeline(BaseModel):
     parametros: Dict[str, Any] = Field(default_factory=dict)
 
 
+class ModuloConfig(BaseModel):
+    """Uma placa/balcão dentro de uma opção (multiplacas).
+
+    Cada placa tem suas próprias dimensões e suas próprias seções. Uma placa
+    pode ficar sem seções (vazia) enquanto o usuário a configura.
+    """
+
+    configuracao_balcao: ConfiguracaoBalcao
+    pipeline_secoes: List[SecaoPipeline] = Field(default_factory=list)
+
+
 class ProcessarLayoutRequest(BaseModel):
-    """Payload de processamento de layout (prévia PDF/PPTX)."""
+    """Payload de processamento de layout (prévia PDF/PPTX).
+
+    `modulos` (multiplacas) é opcional: quando preenchido, monta uma opção
+    com N placas independentes; caso contrário usa `configuracao_balcao` +
+    `pipeline_secoes` como uma única placa (compatibilidade).
+    """
 
     nome_cliente: str = Field(default="Cliente Não Informado")
     configuracao_balcao: ConfiguracaoBalcao
-    pipeline_secoes: List[SecaoPipeline] = Field(min_length=1)
+    pipeline_secoes: List[SecaoPipeline] = Field(default_factory=list)
+    modulos: List[ModuloConfig] = Field(
+        default_factory=list, description="Multiplacas da opção (opcional)"
+    )
 
 
 class ItemLayout(BaseModel):
@@ -62,3 +81,7 @@ class ProcessarV1Response(BaseModel):
     largura_balcao_cm: float
     profundidade_balcao_cm: float
     itens: List[ItemLayout]
+    modulos_balcao_cm: List[float] = Field(
+        default_factory=list,
+        description="Larguras das placas (multiplacas); vazio = 1 placa",
+    )

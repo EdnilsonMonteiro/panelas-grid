@@ -19,7 +19,10 @@ from modules.pedidos.pedido_schema import (
     PedidoListaResposta,
     PedidoResposta,
 )
-from modules.pipeline.pipeline_service import normalizar_slug_cliente
+from modules.pipeline.pipeline_service import (
+    combinar_modulos_pedido,
+    normalizar_slug_cliente,
+)
 from modules.render import render_service
 from modules.render.render_schema import Render3DRequest
 from pipeline_builder import construir_pipeline_desde_json
@@ -112,6 +115,22 @@ def salvar_layout(
         [secao.model_dump(mode="json") for secao in dados.pipeline_secoes],
         ensure_ascii=False,
     )
+    modulos_json = None
+    if dados.modulos:
+        modulos_json = json.dumps(
+            [
+                {
+                    "configuracao_balcao": m.configuracao_balcao.model_dump(
+                        mode="json"
+                    ),
+                    "pipeline_secoes": [
+                        s.model_dump(mode="json") for s in m.pipeline_secoes
+                    ],
+                }
+                for m in dados.modulos
+            ],
+            ensure_ascii=False,
+        )
 
     novo_id = repo.inserir_layout(
         conn,
@@ -120,6 +139,7 @@ def salvar_layout(
         dados.titulo,
         config_json,
         pipeline_json,
+        modulos_json=modulos_json,
     )
 
     return LayoutPedidoResposta(
@@ -128,6 +148,7 @@ def salvar_layout(
         titulo=dados.titulo,
         configuracao_balcao=json.loads(config_json),
         pipeline_secoes=json.loads(pipeline_json),
+        modulos=json.loads(modulos_json) if modulos_json else [],
     )
 
 
@@ -159,10 +180,14 @@ def _reconstruir_pedidos(conn: sqlite3.Connection, pedido_id: int) -> List[Pedid
     pedidos: List[PedidoCliente] = []
     for linha in repo.listar_layouts(conn, pedido_id):
         pedido_calculado = PedidoCliente(nome_cliente=nome_cliente)
-        payload = {
-            "configuracao_balcao": json.loads(linha["configuracao_balcao"]),
-            "pipeline_secoes": json.loads(linha["pipeline_secoes"]),
-        }
+        modulos = json.loads(linha["modulos_json"]) if linha.get("modulos_json") else []
+        if modulos:
+            payload = {"modulos": modulos}
+        else:
+            payload = {
+                "configuracao_balcao": json.loads(linha["configuracao_balcao"]),
+                "pipeline_secoes": json.loads(linha["pipeline_secoes"]),
+            }
         construir_pipeline_desde_json(payload, pedido_calculado)
         pedidos.append(pedido_calculado)
     return pedidos
@@ -237,7 +262,11 @@ def exportar_proposta(conn: sqlite3.Connection, pedido_id: int) -> str:
     titulos = _reconstruir_titulos(conn, pedido_id)
     nome_cliente = pedido["nome_cliente"] or pedido["nome_pedido"]
     data = datetime.now().strftime("%d/%m/%Y")
-    modulo_principal = pedidos[0].modulos[0]
+
+    # Combina as placas (multiplacas) para o render 3D e as medidas do cabeçalho
+    itens_combinados, largura_total, profundidade, larguras_placas = (
+        combinar_modulos_pedido(pedidos[0])
+    )
 
     # Render 3D da Opção 1 no servidor (falha não derruba o PDF)
     caminho_png: Optional[str] = None
@@ -251,13 +280,14 @@ def exportar_proposta(conn: sqlite3.Connection, pedido_id: int) -> str:
                 "w": item["w"],
                 "h": item["h"],
             }
-            for item in modulo_principal.engine.itens
+            for item in itens_combinados
         ]
         request = Render3DRequest(
             nome_cliente=nome_cliente,
-            largura_balcao_cm=modulo_principal.engine.L,
-            profundidade_balcao_cm=modulo_principal.engine.P,
+            largura_balcao_cm=largura_total,
+            profundidade_balcao_cm=profundidade,
             itens=itens_render,
+            modulos_balcao_cm=larguras_placas if len(larguras_placas) > 1 else None,
         )
         caminho_png, _ = render_service.renderizar_png(request)
     except Exception as e:
@@ -267,8 +297,8 @@ def exportar_proposta(conn: sqlite3.Connection, pedido_id: int) -> str:
     dados = {
         "nome_cliente": nome_cliente,
         "data": data,
-        "largura_cm": modulo_principal.engine.L,
-        "profundidade_cm": modulo_principal.engine.P,
+        "largura_cm": largura_total,
+        "profundidade_cm": profundidade,
     }
     opcoes = [
         {
@@ -293,10 +323,12 @@ def exportar_proposta(conn: sqlite3.Connection, pedido_id: int) -> str:
 
 def _mapear_layout(linha: Dict[str, Any]) -> LayoutPedidoResposta:
     """Converte uma linha crua do banco em LayoutPedidoResposta."""
+    modulos = json.loads(linha["modulos_json"]) if linha.get("modulos_json") else []
     return LayoutPedidoResposta(
         id=str(linha["id"]),
         opcao_numero=int(linha["opcao_numero"]),
         titulo=linha["titulo"],
         configuracao_balcao=json.loads(linha["configuracao_balcao"]),
         pipeline_secoes=json.loads(linha["pipeline_secoes"]),
+        modulos=modulos,
     )

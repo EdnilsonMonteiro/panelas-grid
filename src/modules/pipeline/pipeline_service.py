@@ -40,6 +40,32 @@ def obter_schemas_secoes() -> List[Dict[str, Any]]:
     ]
 
 
+GAP_PLACAS_CM = 1.0
+
+
+def combinar_modulos_pedido(pedido):
+    """Combina os itens de todos os módulos (placas) lado a lado.
+
+    Retorna (itens_combinados, largura_total_cm, profundidade_cm,
+    larguras_por_placa_cm). Cada placa tem seus itens deslocados no eixo X
+    pela soma das larguras anteriores + gap, para o render 3D das placas juntas.
+    """
+    itens = []
+    larguras_placas = []
+    x_deslocamento = 0.0
+    profundidade = 0.0
+    for modulo in pedido.modulos:
+        larguras_placas.append(modulo.engine.L)
+        profundidade = max(profundidade, modulo.engine.P)
+        for item in modulo.engine.itens:
+            copia = dict(item)
+            copia["x"] = round(item["x"] + x_deslocamento, 2)
+            itens.append(copia)
+        x_deslocamento += modulo.engine.L + GAP_PLACAS_CM
+    largura_total = x_deslocamento - GAP_PLACAS_CM
+    return itens, largura_total, profundidade, larguras_placas
+
+
 def calcular_layout(dados: ProcessarLayoutRequest) -> PedidoCliente:
     """Executa o motor geométrico e devolve o pedido com os módulos calculados."""
     nome_cliente = dados.nome_cliente.strip() or "Cliente Não Informado"
