@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from typing import List
 
 from reportlab.lib.colors import black, lightgrey, white
 from reportlab.lib.pagesizes import A4, landscape
@@ -16,15 +17,29 @@ PASTA_ASSETS = PASTA_RAIZ_PROJETO / "assets"
 
 print(f" > Buscando assets em: {PASTA_ASSETS}")
 
+TITULO_PADRAO = "Self-Service Quente"
+
 
 class ExportadorPDF:
     @staticmethod
     def gerar_layout(pedido, nome_arquivo):
+        """Gera o PDF de um único layout (backward compatibility)."""
+        ExportadorPDF.gerar_layouts([pedido], [TITULO_PADRAO], nome_arquivo)
+
+    @staticmethod
+    def gerar_layouts(pedidos: List, nomes_opcoes: List[str], nome_arquivo: str):
+        """Gera o PDF com uma página por pedido (uma 'Opção' por página).
+
+        `pedidos` é a lista de PedidoCliente calculados e `nomes_opcoes`
+        contém o título (subtítulo) de cada opção, na mesma ordem.
+        """
         ESCALA = 0.1  # Escala 1:10
 
         # --- 1. CÁLCULO DA LARGURA DINÂMICA DA PÁGINA ---
-        # Encontra o maior comprimento (L) entre os módulos do pedido
-        maior_comprimento_balcao_cm = max(modulo.engine.L for modulo in pedido.modulos)
+        # Encontra o maior comprimento (L) entre todos os módulos de todos os pedidos
+        maior_comprimento_balcao_cm = max(
+            modulo.engine.L for pedido in pedidos for modulo in pedido.modulos
+        )
         largura_balcao_no_pdf = maior_comprimento_balcao_cm * cm * ESCALA
 
         # Define uma folga de segurança de 20cm reais no PDF (10cm de cada lado para as cotas e respiro)
@@ -39,6 +54,22 @@ class ExportadorPDF:
 
         # Inicializa o canvas com o tamanho de página dinâmico
         c = canvas.Canvas(nome_arquivo, pagesize=(w_page, h_page))
+
+        for indice, pedido in enumerate(pedidos):
+            titulo = (
+                nomes_opcoes[indice] if indice < len(nomes_opcoes) else TITULO_PADRAO
+            )
+            ExportadorPDF._desenhar_pagina(c, pedido, indice + 1, titulo, w_page, h_page)
+            if indice < len(pedidos) - 1:
+                c.showPage()
+
+        c.save()
+        print(f" > PDF gerado com sucesso com dimensões adaptativas: '{nome_arquivo}'")
+
+    @staticmethod
+    def _desenhar_pagina(c, pedido, num_opcao, titulo, w_page, h_page):
+        """Desenha o conteúdo de uma única página (uma opção) do PDF."""
+        ESCALA = 0.1
 
         topo_atual_y = h_page - 1.0 * cm
 
@@ -86,13 +117,13 @@ class ExportadorPDF:
         c.drawString(1.5 * cm, topo_atual_y, f"Cliente: {pedido.nome_cliente}")
         topo_atual_y -= 1.2 * cm
 
-        # --- 5. BLOCO CENTRALIZADO DINAMICAMENTE: OPÇÃO 1 ---
+        # --- 5. BLOCO CENTRALIZADO DINAMICAMENTE: OPÇÃO N ---
         c.setFont("Helvetica-Bold", 24)
-        c.drawCentredString(w_page / 2, topo_atual_y, "Opção 1")
+        c.drawCentredString(w_page / 2, topo_atual_y, f"Opção {num_opcao}")
         topo_atual_y -= 0.8 * cm
 
         c.setFont("Helvetica-BoldOblique", 16)
-        c.drawCentredString(w_page / 2, topo_atual_y, "Self-Service Quente")
+        c.drawCentredString(w_page / 2, topo_atual_y, titulo)
         topo_atual_y -= 0.4 * cm
 
         # Linha sólida do título centralizada na nova página
@@ -233,6 +264,3 @@ class ExportadorPDF:
             c.setFont("Helvetica-Bold", 14)
             c.drawCentredString(0, 0, f"{modulo.engine.P}cm")
             c.restoreState()
-
-        c.save()
-        print(f" > PDF gerado com sucesso com dimensões adaptativas: '{nome_arquivo}'")

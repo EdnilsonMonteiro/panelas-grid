@@ -14,11 +14,21 @@ from pipeline_builder import REGISTRO_SECOES, construir_pipeline_desde_json
 
 
 def normalizar_slug_cliente(nome_cliente: str) -> str:
-    """Gera o slug do nome do cliente (minúsculas, underscores, sem acentos)."""
+    """Gera o slug do nome do cliente (minúsculas, underscores, sem acentos).
+
+    Também remove/substitui caracteres inválidos em nomes de arquivo
+    (ex.: '/', ':', '*' etc.), garantindo que o slug possa ser usado
+    tanto em caminhos do disco quanto em nomes de download.
+    """
     slug = nome_cliente.strip().replace(" ", "_").lower() or "cliente_nao_informado"
-    return "".join(
+    slug = "".join(
         c for c in unicodedata.normalize("NFD", slug) if unicodedata.category(c) != "Mn"
     )
+    # Caracteres proibidos em nomes de arquivo no Windows / URLs de download
+    for caractere in '/\\:*?"<>|':
+        slug = slug.replace(caractere, "_")
+    slug = "_".join(parte for parte in slug.split("_") if parte)
+    return slug or "cliente_nao_informado"
 
 
 def obter_schemas_secoes() -> List[Dict[str, Any]]:

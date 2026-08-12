@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from typing import List
 
 from pptx import Presentation
 from pptx.dml.color import RGBColor
@@ -20,18 +21,32 @@ PASTA_ASSETS = PASTA_RAIZ_PROJETO / "assets"
 
 print(f" > Buscando assets em: {PASTA_ASSETS}")
 
+TITULO_PADRAO = "Self-Service Quente"
+
 
 class ExportadorPPTX:
     @staticmethod
     def gerar_layout(pedido, nome_arquivo):
+        """Gera o PPTX de um único layout (backward compatibility)."""
+        ExportadorPPTX.gerar_layouts([pedido], [TITULO_PADRAO], nome_arquivo)
+
+    @staticmethod
+    def gerar_layouts(pedidos: List, nomes_opcoes: List[str], nome_arquivo: str):
+        """Gera o PPTX com um slide por pedido (uma 'Opção' por slide).
+
+        `pedidos` é a lista de PedidoCliente calculados e `nomes_opcoes`
+        contém o título (subtítulo) de cada opção, na mesma ordem.
+        """
         prs = Presentation()
 
         # --- DEFINIÇÃO DA ESCALA (1:10) ---
         ESCALA = 0.1
 
         # --- CALCULAR LARGURA DINÂMICA DO SLIDE ---
-        # Encontra o maior comprimento (L) entre os módulos para basear o tamanho do slide
-        maior_comprimento_balcao_cm = max(modulo.engine.L for modulo in pedido.modulos)
+        # Encontra o maior comprimento (L) entre os módulos de todos os pedidos
+        maior_comprimento_balcao_cm = max(
+            modulo.engine.L for pedido in pedidos for modulo in pedido.modulos
+        )
         largura_balcao_no_slide = maior_comprimento_balcao_cm * ESCALA
 
         # Adiciona uma margem de segurança de 20cm (10cm de cada lado para as cotas/textos)
@@ -40,6 +55,20 @@ class ExportadorPPTX:
         # Garante que o slide tenha no mínimo 40cm para manter a consistência estética em balcões pequenos
         prs.slide_width = max(largura_calculada_slide, Cm(40))
         prs.slide_height = Cm(22.5)  # Mantém a proporção vertical Widescreen estável
+
+        for indice, pedido in enumerate(pedidos):
+            titulo = (
+                nomes_opcoes[indice] if indice < len(nomes_opcoes) else TITULO_PADRAO
+            )
+            ExportadorPPTX._adicionar_slide(prs, pedido, indice + 1, titulo)
+
+        prs.save(nome_arquivo)
+        print(f" > Layout PPTX centralizado e exportado com sucesso: '{nome_arquivo}'")
+
+    @staticmethod
+    def _adicionar_slide(prs, pedido, num_opcao, titulo):
+        """Adiciona um slide desenhando um layout (opção) do pedido."""
+        ESCALA = 0.1
 
         slide = prs.slides.add_slide(prs.slide_layouts[6])
 
@@ -80,7 +109,7 @@ class ExportadorPPTX:
         posicao_x_titulo = (prs.slide_width - Cm(20)) / 2
         tx_titulo = slide.shapes.add_textbox(posicao_x_titulo, Cm(1.5), Cm(20), Cm(2))
         tf_titulo = tx_titulo.text_frame
-        tf_titulo.text = "Opção 1\nSelf-Service Quente"
+        tf_titulo.text = f"Opção {num_opcao}\n{titulo}"
         tf_titulo.paragraphs[0].alignment = PP_ALIGN.CENTER
         tf_titulo.paragraphs[0].font.bold = True
         tf_titulo.paragraphs[0].font.size = Pt(20)
@@ -249,6 +278,3 @@ class ExportadorPPTX:
             p_prof.alignment = PP_ALIGN.LEFT
             p_prof.font.bold = True
             p_prof.font.size = Pt(16)
-
-        prs.save(nome_arquivo)
-        print(f" > Layout PPTX centralizado e exportado com sucesso: '{nome_arquivo}'")

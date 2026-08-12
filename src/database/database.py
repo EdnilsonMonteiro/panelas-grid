@@ -16,6 +16,7 @@ def obter_conexao():
     """
     conn = sqlite3.connect(CAMINHO_BANCO, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
@@ -39,6 +40,29 @@ def inicializar_banco():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             nome_catalogo TEXT NOT NULL UNIQUE,
             conteudo_json TEXT NOT NULL -- Lista de cubas/panelas salvas em formato JSON
+        )
+    """)
+
+    # 3. Tabela de Pedidos do Cliente
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS pedidos_cliente (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome_pedido TEXT NOT NULL,
+            nome_cliente TEXT NOT NULL DEFAULT '',
+            criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+
+    # 4. Tabela de Layouts (Opções) de cada Pedido
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS layouts_pedido (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pedido_id INTEGER NOT NULL REFERENCES pedidos_cliente(id) ON DELETE CASCADE,
+            opcao_numero INTEGER NOT NULL,
+            titulo TEXT NOT NULL DEFAULT 'Self-Service Quente',
+            configuracao_balcao TEXT NOT NULL, -- Configuração do balcão em formato JSON
+            pipeline_secoes TEXT NOT NULL, -- Seções do pipeline em formato JSON
+            criado_em TEXT NOT NULL DEFAULT (datetime('now'))
         )
     """)
 

@@ -22,6 +22,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from modules.catalogos import catalogo_router as catalogos
 from modules.exportacao import exportacao_router as exportacao
+from modules.pedidos import pedido_router as pedidos
 from modules.pipeline import pipeline_router as pipeline
 from modules.render import render_router as render
 from modules.templates import template_router as templates
@@ -55,6 +56,7 @@ app.include_router(templates.router)
 app.include_router(pipeline.router)
 app.include_router(pipeline.router_v1)
 app.include_router(exportacao.router)
+app.include_router(pedidos.router)
 app.include_router(render.router)
 
 

@@ -1,0 +1,226 @@
+"""Regras de negócio de pedidos do cliente e seus layouts (opções)."""
+
+import json
+import os
+import sqlite3
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+from core.config import DIRETORIO_TEMPORARIO
+from modelos import PedidoCliente
+from modules.exportacao.exportadores.pdf import ExportadorPDF
+from modules.exportacao.exportadores.pptx import ExportadorPPTX
+from modules.pedidos.pedido_schema import (
+    LayoutPedidoEntrada,
+    LayoutPedidoResposta,
+    PedidoAtualizarEntrada,
+    PedidoEntrada,
+    PedidoListaResposta,
+    PedidoResposta,
+)
+from modules.pipeline.pipeline_service import normalizar_slug_cliente
+from pipeline_builder import construir_pipeline_desde_json
+
+from . import pedido_repository as repo
+
+
+def listar_pedidos(
+    conn: sqlite3.Connection,
+    limite: Optional[int] = None,
+    busca: Optional[str] = None,
+) -> List[PedidoListaResposta]:
+    """Retorna os pedidos para alimentar a sidebar (recentes) e a busca."""
+    return [
+        PedidoListaResposta(
+            id=str(linha["id"]),
+            nome_pedido=linha["nome_pedido"],
+            nome_cliente=linha["nome_cliente"],
+            qtd_layouts=int(linha["qtd_layouts"]),
+        )
+        for linha in repo.listar_pedidos(conn, limite=limite, busca=busca)
+    ]
+
+
+def criar_pedido(conn: sqlite3.Connection, dados: PedidoEntrada) -> PedidoResposta:
+    """Cria um novo pedido e devolve-o já com a lista (vazia) de layouts.
+
+    Quando o nome do pedido não é informado, usa um timestamp legível como
+    identificador (ex.: "12/08/2026 14:35:22").
+    """
+    nome_pedido = dados.nome_pedido or datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    pedido_id = repo.criar(conn, nome_pedido, dados.nome_cliente)
+    return PedidoResposta(
+        id=str(pedido_id),
+        nome_pedido=nome_pedido,
+        nome_cliente=dados.nome_cliente,
+        layouts=[],
+    )
+
+
+def deletar_pedido(conn: sqlite3.Connection, pedido_id: int) -> None:
+    """Remove um pedido e todos os seus layouts (opções)."""
+    if repo.obter(conn, pedido_id) is None:
+        raise ValueError("Pedido não encontrado.")
+    repo.deletar_pedido(conn, pedido_id)
+
+
+def atualizar_pedido(
+    conn: sqlite3.Connection, pedido_id: int, dados: PedidoAtualizarEntrada
+) -> Optional[PedidoResposta]:
+    """Atualiza parcialmente um pedido (nome e/ou cliente) e devolve o pedido atualizado."""
+    if repo.obter(conn, pedido_id) is None:
+        return None
+
+    if dados.nome_cliente is not None:
+        repo.atualizar_nome_cliente(conn, pedido_id, dados.nome_cliente)
+    if dados.nome_pedido is not None:
+        repo.atualizar_nome_pedido(conn, pedido_id, dados.nome_pedido)
+
+    return obter_pedido(conn, pedido_id)
+
+
+def obter_pedido(conn: sqlite3.Connection, pedido_id: int) -> Optional[PedidoResposta]:
+    """Retorna um pedido com seus layouts, ou None se não existir."""
+    pedido = repo.obter(conn, pedido_id)
+    if pedido is None:
+        return None
+
+    return PedidoResposta(
+        id=str(pedido["id"]),
+        nome_pedido=pedido["nome_pedido"],
+        nome_cliente=pedido["nome_cliente"],
+        layouts=[_mapear_layout(linha) for linha in repo.listar_layouts(conn, pedido_id)],
+    )
+
+
+def salvar_layout(
+    conn: sqlite3.Connection, pedido_id: int, dados: LayoutPedidoEntrada
+) -> LayoutPedidoResposta:
+    """Persiste o layout atual como uma nova opção do pedido."""
+    if repo.obter(conn, pedido_id) is None:
+        raise ValueError("Pedido não encontrado.")
+
+    opcao_numero = repo.proximo_numero_opcao(conn, pedido_id)
+
+    config_json = json.dumps(
+        dados.configuracao_balcao.model_dump(mode="json"), ensure_ascii=False
+    )
+    pipeline_json = json.dumps(
+        [secao.model_dump(mode="json") for secao in dados.pipeline_secoes],
+        ensure_ascii=False,
+    )
+
+    novo_id = repo.inserir_layout(
+        conn,
+        pedido_id,
+        opcao_numero,
+        dados.titulo,
+        config_json,
+        pipeline_json,
+    )
+
+    return LayoutPedidoResposta(
+        id=str(novo_id),
+        opcao_numero=opcao_numero,
+        titulo=dados.titulo,
+        configuracao_balcao=json.loads(config_json),
+        pipeline_secoes=json.loads(pipeline_json),
+    )
+
+
+def deletar_layout(conn: sqlite3.Connection, layout_id: int) -> None:
+    """Remove uma opção e renumera as demais sequencialmente (1..N)."""
+    layout = repo.obter_layout(conn, layout_id)
+    if layout is None:
+        raise ValueError("Layout não encontrado.")
+
+    repo.deletar_layout(conn, layout_id)
+    repo.renumerar(conn, layout["pedido_id"])
+
+
+def reordenar_layouts(
+    conn: sqlite3.Connection, pedido_id: int, ordered_layout_ids: List[int]
+) -> None:
+    """Reatribui os números de opção na ordem final desejada."""
+    repo.reordenar(conn, ordered_layout_ids)
+
+
+def _reconstruir_pedidos(conn: sqlite3.Connection, pedido_id: int) -> List[PedidoCliente]:
+    """Reconstrói os PedidoCliente a partir das opções salvas (motor stateless)."""
+    pedido = repo.obter(conn, pedido_id)
+    if pedido is None:
+        raise ValueError("Pedido não encontrado.")
+
+    nome_cliente = pedido["nome_cliente"] or pedido["nome_pedido"]
+
+    pedidos: List[PedidoCliente] = []
+    for linha in repo.listar_layouts(conn, pedido_id):
+        pedido_calculado = PedidoCliente(nome_cliente=nome_cliente)
+        payload = {
+            "configuracao_balcao": json.loads(linha["configuracao_balcao"]),
+            "pipeline_secoes": json.loads(linha["pipeline_secoes"]),
+        }
+        construir_pipeline_desde_json(payload, pedido_calculado)
+        pedidos.append(pedido_calculado)
+    return pedidos
+
+
+def _reconstruir_titulos(conn: sqlite3.Connection, pedido_id: int) -> List[str]:
+    """Retorna o título de cada opção, na ordem de exibição."""
+    return [
+        linha["titulo"]
+        for linha in repo.listar_layouts(conn, pedido_id)
+    ]
+
+
+def exportar_pdf(conn: sqlite3.Connection, pedido_id: int) -> str:
+    """Gera o PDF com uma página por opção salva e devolve o caminho do arquivo."""
+    pedido = repo.obter(conn, pedido_id)
+    if pedido is None:
+        raise ValueError("Pedido não encontrado.")
+
+    pedidos = _reconstruir_pedidos(conn, pedido_id)
+    if not pedidos:
+        raise ValueError("O pedido não possui opções salvas para exportar.")
+
+    nome_slug = normalizar_slug_cliente(pedido["nome_pedido"])
+    caminho_pdf = os.path.join(DIRETORIO_TEMPORARIO, f"layout_{nome_slug}_opcoes.pdf")
+
+    ExportadorPDF.gerar_layouts(
+        pedidos,
+        _reconstruir_titulos(conn, pedido_id),
+        caminho_pdf,
+    )
+    return caminho_pdf
+
+
+def exportar_pptx(conn: sqlite3.Connection, pedido_id: int) -> str:
+    """Gera o PPTX com um slide por opção salva e devolve o caminho do arquivo."""
+    pedido = repo.obter(conn, pedido_id)
+    if pedido is None:
+        raise ValueError("Pedido não encontrado.")
+
+    pedidos = _reconstruir_pedidos(conn, pedido_id)
+    if not pedidos:
+        raise ValueError("O pedido não possui opções salvas para exportar.")
+
+    nome_slug = normalizar_slug_cliente(pedido["nome_pedido"])
+    caminho_pptx = os.path.join(DIRETORIO_TEMPORARIO, f"layout_{nome_slug}_opcoes.pptx")
+
+    ExportadorPPTX.gerar_layouts(
+        pedidos,
+        _reconstruir_titulos(conn, pedido_id),
+        caminho_pptx,
+    )
+    return caminho_pptx
+
+
+def _mapear_layout(linha: Dict[str, Any]) -> LayoutPedidoResposta:
+    """Converte uma linha crua do banco em LayoutPedidoResposta."""
+    return LayoutPedidoResposta(
+        id=str(linha["id"]),
+        opcao_numero=int(linha["opcao_numero"]),
+        titulo=linha["titulo"],
+        configuracao_balcao=json.loads(linha["configuracao_balcao"]),
+        pipeline_secoes=json.loads(linha["pipeline_secoes"]),
+    )
