@@ -67,6 +67,101 @@ class ExportadorPDF:
         print(f" > PDF gerado com sucesso com dimensões adaptativas: '{nome_arquivo}'")
 
     @staticmethod
+    def _desenhar_balcao(
+        c, modulo, offset_x, offset_y, escala, exibir_texto=True, tamanho_texto=8
+    ):
+        """Desenha o balcão (fundo) e as panelas/peças alocadas em um módulo.
+
+        Reutilizável: a página completa usa `escala=0.1`; miniaturas usam uma
+        escala calculada para caberem na caixa desejada. O texto de medida só
+        é desenhado quando a peça é grande o suficiente para lê-lo.
+        """
+        largura_real = modulo.engine.L * cm * escala
+        altura_real = modulo.engine.P * cm * escala
+
+        # --- FUNDO DO BALCÃO ---
+        caminho_fundo = os.path.join(PASTA_ASSETS, "fundo_perfurado.png")
+        if os.path.exists(caminho_fundo):
+            c.drawImage(
+                caminho_fundo,
+                offset_x,
+                offset_y,
+                largura_real,
+                altura_real,
+                mask="auto",
+            )
+        else:
+            c.setFillColor(lightgrey)
+            c.setStrokeColor(black)
+            c.rect(offset_x, offset_y, largura_real, altura_real, fill=1, stroke=1)
+
+        # --- ALOCAÇÃO DAS PANELAS E PEÇAS ---
+        caminho_panela_redonda = os.path.join(PASTA_ASSETS, "panela_redonda.png")
+        caminho_panela_retangular = os.path.join(
+            PASTA_ASSETS, "panela_retangular.png"
+        )
+
+        for item in modulo.engine.itens:
+            w_dim = item["w"] * cm * escala
+            h_dim = item["h"] * cm * escala
+
+            x_pos = offset_x + item["x"] * cm * escala
+            y_pos = offset_y + altura_real - (item["y"] + item["h"]) * cm * escala
+
+            is_circulo = item.get("formato") == "circulo"
+
+            if is_circulo:
+                w_original = w_dim
+                h_original = h_dim
+                diametro_base = min(w_original, h_original)
+
+                h_dim = diametro_base * 0.95
+                w_dim = h_dim * 1.08
+
+                x_pos += (w_original - w_dim) / 2
+                y_pos += (h_original - h_dim) / 2
+
+            img_path = (
+                caminho_panela_redonda if is_circulo else caminho_panela_retangular
+            )
+
+            if os.path.exists(img_path):
+                if is_circulo:
+                    c.saveState()
+                    c.translate(x_pos + w_dim / 2, y_pos + h_dim / 2)
+                    c.rotate(33.8)
+                    c.drawImage(
+                        img_path, -w_dim / 2, -h_dim / 2, w_dim, h_dim, mask="auto"
+                    )
+                    c.restoreState()
+                else:
+                    c.drawImage(img_path, x_pos, y_pos, w_dim, h_dim, mask="auto")
+            else:
+                c.setFillColor(white)
+                c.setStrokeColor(black)
+                if is_circulo:
+                    c.ellipse(
+                        x_pos, y_pos, x_pos + w_dim, y_pos + h_dim, fill=1, stroke=1
+                    )
+                else:
+                    c.rect(x_pos, y_pos, w_dim, h_dim, fill=1, stroke=1)
+
+            if exibir_texto and min(w_dim, h_dim) >= 12:
+                # Texto do diâmetro/medidas centralizado na peça
+                c.setFillColor(black)
+                c.setFont("Helvetica-Bold", tamanho_texto)
+                texto_panela = (
+                    f"{int(item['w'])}"
+                    if is_circulo
+                    else f"{int(item['w'])}x{int(item['h'])}"
+                )
+                c.drawCentredString(
+                    x_pos + w_dim / 2,
+                    y_pos + h_dim / 2 - 3,
+                    texto_panela,
+                )
+
+    @staticmethod
     def _desenhar_pagina(c, pedido, num_opcao, titulo, w_page, h_page):
         """Desenha o conteúdo de uma única página (uma opção) do PDF."""
         ESCALA = 0.1
@@ -142,87 +237,9 @@ class ExportadorPDF:
             # Recalcula o offset_x dinamicamente para o centro da nova página expandida
             offset_x = (w_page - largura_real) / 2
 
-            # --- 6.1. FUNDO DO BALCÃO ---
-            caminho_fundo = os.path.join(PASTA_ASSETS, "fundo_perfurado.png")
-            if os.path.exists(caminho_fundo):
-                c.drawImage(
-                    caminho_fundo,
-                    offset_x,
-                    offset_y,
-                    largura_real,
-                    altura_real,
-                    mask="auto",
-                )
-            else:
-                c.setFillColor(lightgrey)
-                c.setStrokeColor(black)
-                c.rect(offset_x, offset_y, largura_real, altura_real, fill=1, stroke=1)
-
-            # --- 6.2. ALOCAÇÃO DAS PANELAS E PEÇAS ---
-            for item in modulo.engine.itens:
-                w_dim = item["w"] * cm * ESCALA
-                h_dim = item["h"] * cm * ESCALA
-
-                x_pos = offset_x + item["x"] * cm * ESCALA
-                y_pos = offset_y + altura_real - (item["y"] + item["h"]) * cm * ESCALA
-
-                is_circulo = item.get("formato") == "circulo"
-
-                if is_circulo:
-                    w_original = w_dim
-                    h_original = h_dim
-                    diametro_base = min(w_original, h_original)
-
-                    h_dim = diametro_base * 0.95
-                    w_dim = h_dim * 1.08
-
-                    x_pos += (w_original - w_dim) / 2
-                    y_pos += (h_original - h_dim) / 2
-
-                caminho_panela_redonda = os.path.join(
-                    PASTA_ASSETS, "panela_redonda.png"
-                )
-                caminho_panela_retangular = os.path.join(
-                    PASTA_ASSETS, "panela_retangular.png"
-                )
-                img_path = (
-                    caminho_panela_redonda if is_circulo else caminho_panela_retangular
-                )
-
-                if os.path.exists(img_path):
-                    if is_circulo:
-                        c.saveState()
-                        c.translate(x_pos + w_dim / 2, y_pos + h_dim / 2)
-                        c.rotate(33.8)
-                        c.drawImage(
-                            img_path, -w_dim / 2, -h_dim / 2, w_dim, h_dim, mask="auto"
-                        )
-                        c.restoreState()
-                    else:
-                        c.drawImage(img_path, x_pos, y_pos, w_dim, h_dim, mask="auto")
-                else:
-                    c.setFillColor(white)
-                    c.setStrokeColor(black)
-                    if is_circulo:
-                        c.ellipse(
-                            x_pos, y_pos, x_pos + w_dim, y_pos + h_dim, fill=1, stroke=1
-                        )
-                    else:
-                        c.rect(x_pos, y_pos, w_dim, h_dim, fill=1, stroke=1)
-
-                # Texto do diâmetro/medidas centralizado na peça
-                c.setFillColor(black)
-                c.setFont("Helvetica-Bold", 8)
-                texto_panela = (
-                    f"{int(item['w'])}"
-                    if is_circulo
-                    else f"{int(item['w'])}x{int(item['h'])}"
-                )
-                c.drawCentredString(
-                    x_pos + w_dim / 2,
-                    y_pos + h_dim / 2 - 3,
-                    texto_panela,
-                )
+            ExportadorPDF._desenhar_balcao(
+                c, modulo, offset_x, offset_y, ESCALA, exibir_texto=True
+            )
 
             # --- 7. RÉGUAS MÉTRICAS (COTAS) ---
 

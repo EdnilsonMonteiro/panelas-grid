@@ -199,3 +199,27 @@ def exportar_pptx(
         media_type=MIMETYPE_PPTX,
         filename=f"layout_{pipeline_service.normalizar_slug_cliente(pedido.nome_pedido)}_opcoes.pptx",
     )
+
+
+@router.get("/{pedido_id}/exportar/proposta")
+def exportar_proposta(
+    pedido_id: int, conn: sqlite3.Connection = Depends(get_db)
+) -> FileResponse:
+    """Gera o PDF da Proposta Comercial (página única com render 3D e pistas)."""
+    try:
+        pedido = pedido_service.obter_pedido(conn, pedido_id)
+        if pedido is None:
+            raise HTTPException(status_code=404, detail="Pedido não encontrado.")
+        caminho_pdf = pedido_service.exportar_proposta(conn, pedido_id)
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro na exportação: {e}") from e
+
+    return FileResponse(
+        caminho_pdf,
+        media_type="application/pdf",
+        filename=f"layout_{pipeline_service.normalizar_slug_cliente(pedido.nome_pedido)}_proposta.pdf",
+    )

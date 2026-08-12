@@ -29,12 +29,17 @@ class ModuloBalcao:
             print(secao)
             print(x_limite_secao)
 
+            qtd_itens_antes = len(self.engine.itens)
             secao.executar_alocacao(
                 modulo=self,
                 x_min=x_atual,
                 x_max=x_limite_secao,
                 catalogo=catalogo_mestre,
             )
+            # Marca cada item alocado nesta seção para permitir agrupar a
+            # composição do layout por pista (fria/quente) na exportação.
+            for item in self.engine.itens[qtd_itens_antes:]:
+                item["secao"] = secao.nome
             print(
                 f"DEBUG PÓS-{secao.nome}: Quantidade total de itens no balcão = {len(self.engine.itens)}"
             )

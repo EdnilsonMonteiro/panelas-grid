@@ -10,6 +10,7 @@ from core.config import DIRETORIO_TEMPORARIO
 from modelos import PedidoCliente
 from modules.exportacao.exportadores.pdf import ExportadorPDF
 from modules.exportacao.exportadores.pptx import ExportadorPPTX
+from modules.exportacao.exportadores.proposta import ExportadorProposta
 from modules.pedidos.pedido_schema import (
     LayoutPedidoEntrada,
     LayoutPedidoResposta,
@@ -19,6 +20,8 @@ from modules.pedidos.pedido_schema import (
     PedidoResposta,
 )
 from modules.pipeline.pipeline_service import normalizar_slug_cliente
+from modules.render import render_service
+from modules.render.render_schema import Render3DRequest
 from pipeline_builder import construir_pipeline_desde_json
 
 from . import pedido_repository as repo
@@ -213,6 +216,79 @@ def exportar_pptx(conn: sqlite3.Connection, pedido_id: int) -> str:
         caminho_pptx,
     )
     return caminho_pptx
+
+
+def exportar_proposta(conn: sqlite3.Connection, pedido_id: int) -> str:
+    """Gera o PDF da Proposta Comercial (página única) e devolve o caminho.
+
+    A Opção 1 (principal) tem o render 3D gerado no servidor (Blender) e
+    embutido no PDF; as demais opções aparecem como plantas baixas 2D.
+    """
+    pedido = repo.obter(conn, pedido_id)
+    if pedido is None:
+        raise ValueError("Pedido não encontrado.")
+
+    pedidos = _reconstruir_pedidos(conn, pedido_id)
+    if not pedidos:
+        raise ValueError(
+            "O pedido não possui opções salvas para gerar a proposta comercial."
+        )
+
+    titulos = _reconstruir_titulos(conn, pedido_id)
+    nome_cliente = pedido["nome_cliente"] or pedido["nome_pedido"]
+    data = datetime.now().strftime("%d/%m/%Y")
+    modulo_principal = pedidos[0].modulos[0]
+
+    # Render 3D da Opção 1 no servidor (falha não derruba o PDF)
+    caminho_png: Optional[str] = None
+    try:
+        itens_render = [
+            {
+                "nome": item["nome"],
+                "formato": item.get("formato", "retangulo"),
+                "x": item["x"],
+                "y": item["y"],
+                "w": item["w"],
+                "h": item["h"],
+            }
+            for item in modulo_principal.engine.itens
+        ]
+        request = Render3DRequest(
+            nome_cliente=nome_cliente,
+            largura_balcao_cm=modulo_principal.engine.L,
+            profundidade_balcao_cm=modulo_principal.engine.P,
+            itens=itens_render,
+        )
+        caminho_png, _ = render_service.renderizar_png(request)
+    except Exception as e:
+        print(f" > [Proposta] Render 3D indisponível ({e}); usando placeholder.")
+        caminho_png = None
+
+    dados = {
+        "nome_cliente": nome_cliente,
+        "data": data,
+        "largura_cm": modulo_principal.engine.L,
+        "profundidade_cm": modulo_principal.engine.P,
+    }
+    opcoes = [
+        {
+            "numero": indice + 1,
+            "titulo": titulos[indice] if indice < len(titulos) else "Self-Service Quente",
+            "pedido": p,
+            "imagem_3d": caminho_png if indice == 0 else None,
+        }
+        for indice, p in enumerate(pedidos)
+    ]
+
+    nome_slug = normalizar_slug_cliente(pedido["nome_pedido"])
+    caminho_pdf = os.path.join(DIRETORIO_TEMPORARIO, f"layout_{nome_slug}_proposta.pdf")
+
+    try:
+        ExportadorProposta.gerar(dados, opcoes, caminho_pdf)
+    finally:
+        if caminho_png and os.path.exists(caminho_png):
+            os.unlink(caminho_png)
+    return caminho_pdf
 
 
 def _mapear_layout(linha: Dict[str, Any]) -> LayoutPedidoResposta:
