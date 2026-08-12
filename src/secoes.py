@@ -148,7 +148,7 @@ class SecaoTorresGulosas(Secao):
 
     UI_SCHEMA = {
         "tipo": "SecaoTorresGulosas",
-        "nome_amigavel": "Preenchimento Guloso (Rápido)",
+        "nome_amigavel": "Preenchimento Guloso",
         "descricao": "Preenche o espaço tentando alocar as maiores travessas primeiro.",
         "campos": [
             {"nome": "catalogo", "tipo": "catalogo", "label": "Catálogo de Travessas"},
@@ -184,7 +184,7 @@ class SecaoMioloTorres(Secao):
 
     UI_SCHEMA = {
         "tipo": "SecaoMioloTorres",
-        "nome_amigavel": "Otimização de Torres (Miolo)",
+        "nome_amigavel": "Otimização de Torres",
         "descricao": "Calcula combinações verticais complexas para maximizar matematicamente a altura utilizada do balcão.",
         "campos": [
             {"nome": "catalogo", "tipo": "catalogo", "label": "Catálogo de Cubas"},
