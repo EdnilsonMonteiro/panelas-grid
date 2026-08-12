@@ -32,9 +32,9 @@ Responsabilidades (conforme SPEC_3D_RENDER.md):
     8. Desenhar cotas dimensionais (linhas CURVE brancas emissivas + textos
        FONT com constraint de rotação para a câmera) em metros.
     9. Configurar o renderizador `BLENDER_EEVEE_NEXT`, o color management
-       (`AgX` com fallback `Filmic`, look Medium High Contrast/None e
-       exposure -0.85) e o bloom suave (threshold 3.5), gerando a imagem
-       `.png`.
+       (`AgX` com fallback `Filmic`, look Medium High Contrast/None, exposure
+       -0.85 e Curve Mapping com canal R aquecido ~3400 K), o bloom suave
+       (threshold 3.5) e gerar a imagem `.png`.
 
 Contrato do JSON de entrada (todas as medidas em METROS, coordenadas no
 CENTRO da peça, eixo Z apontando para cima):
@@ -758,11 +758,15 @@ def configurar_camera(conf_camera, conf_balcao):
     return camera
 
 
-# Fotografia de alimentos: cor quente das luzes principais (~3800 K) e
-# intensidade do HDRI de ambiente. Strength 0.8 calibrado para não estourar
-# os brancos (acima de 1.0 o cowboy_town_saloon_2k.exr satura a cena).
-COR_LUZ_QUENTE = (1.0, 0.9, 0.8)
+# Fotografia de alimentos: cor quente das luzes principais (~3400 K, tom
+# amarelado de restaurante) e intensidade do HDRI de ambiente. Strength 1.0
+# calibrado para não estourar os brancos (acima disso o cowboy_town_saloon
+# _2k.exr satura a cena). TOM_HDRI multiplica o fundo por um tom levemente
+# amarelado para evitar iluminação fria de fundo.
+COR_LUZ_QUENTE = (1.0, 0.82, 0.65)
 INTENSIDADE_HDRI = 1.0
+TOM_HDRI = (1.0, 0.95, 0.88)
+SATURACAO_HDRI = 0.85
 
 
 def _encontrar_hdri():
@@ -777,9 +781,36 @@ def _encontrar_hdri():
     return None
 
 
+def _criar_multiply_color(arvore, cor_constante):
+    """Cria um nó de mistura MULTIPLY com o segundo operando fixo (cor
+    constante). Aceita o `ShaderNodeMix` (RGBA) do Blender 4.x/5.x e o
+    `ShaderNodeMixRGB` legado. Retorna (nó, nome_socket_entrada, nome_
+    socket_saida) para o chamador linkar o primeiro operando (HDRI) e a saída."""
+    if hasattr(bpy.types, "ShaderNodeMix"):
+        no = arvore.nodes.new("ShaderNodeMix")
+        no.data_type = "RGBA"
+        no.blend_type = "MULTIPLY"
+        entrada = "A_Color" if "A_Color" in no.inputs else "A"
+        saida = "Result_Color" if "Result_Color" in no.outputs else "Result"
+        fator = "Factor_Color" if "Factor_Color" in no.inputs else "Factor"
+        no.inputs[fator].default_value = 1.0
+        no.inputs["B_Color" if "B_Color" in no.inputs else "B"].default_value = (
+            *cor_constante,
+            1.0,
+        )
+        return no, entrada, saida
+    no = arvore.nodes.new("ShaderNodeMixRGB")
+    no.blend_type = "MULTIPLY"
+    no.inputs["Fac"].default_value = 1.0
+    no.inputs["Color2"].default_value = (*cor_constante, 1.0)
+    return no, "Color1", "Color"
+
+
 def _configurar_mundo_hdri(caminho_hdri):
     """Conecta o HDRI ao `World.node_tree` via `ShaderNodeTexEnvironment`
-    (Background com Strength 0.8), gerando iluminação/reflexos de estúdio."""
+    (Background com Strength 1.0), com cadeia de aquecimento:
+    Environment Texture -> Hue/Saturation/Value (Hue 0.5, Saturation 0.85)
+    -> MULTIPLY (tom amarelado 1.0, 0.95, 0.88) -> Background."""
     mundo = bpy.context.scene.world
     if mundo is None:
         mundo = bpy.data.worlds.new("Mundo")
@@ -798,7 +829,19 @@ def _configurar_mundo_hdri(caminho_hdri):
 
     ambiente = arvore.nodes.new("ShaderNodeTexEnvironment")
     ambiente.image = bpy.data.images.load(caminho_hdri)
-    arvore.links.new(ambiente.outputs["Color"], fundo.inputs["Color"])
+
+    # Hue/Saturation/Value: Hue 0.5 preserva a matriz, Saturation levemente
+    # reduzida para suavizar cores agressivas do fundo.
+    hsv = arvore.nodes.new("ShaderNodeHueSaturation")
+    hsv.inputs["Hue"].default_value = 0.5
+    hsv.inputs["Saturation"].default_value = SATURACAO_HDRI
+    hsv.inputs["Value"].default_value = 1.0
+    arvore.links.new(ambiente.outputs["Color"], hsv.inputs["Color"])
+
+    # Tom amarelado (multiplicação) para evitar fundo frio.
+    multiplicador, entrada_a, saida_result = _criar_multiply_color(arvore, TOM_HDRI)
+    arvore.links.new(hsv.outputs["Color"], multiplicador.inputs[entrada_a])
+    arvore.links.new(multiplicador.outputs[saida_result], fundo.inputs["Color"])
     fundo.inputs["Strength"].default_value = INTENSIDADE_HDRI
     arvore.links.new(fundo.outputs["Background"], saida.inputs["Surface"])
 
@@ -1676,7 +1719,8 @@ def _configurar_color_grading(cena):
     o AgX não existe no Blender.
 
     Exposure -0.85 reduz a queima de brancos (arroz/batata) sem apagar as
-    sombras."""
+    sombras. Curve Mapping aquece os tons médios elevando o meio da curva do
+    canal R (temperatura de fotografia gastronômica ~3400 K)."""
     try:
         cena.view_settings.exposure = -0.85
     except TypeError:
@@ -1693,11 +1737,33 @@ def _configurar_color_grading(cena):
             except TypeError:
                 continue
         break
+    _configurar_curva_quente(cena)
     print(
         f" > Color management: view_transform="
         f"'{cena.view_settings.view_transform}', look='{cena.view_settings.look}', "
         f"exposure={cena.view_settings.exposure}"
     )
+
+
+def _configurar_curva_quente(cena):
+    """Curve Mapping aquecido: ativa use_curve_mapping e sobe o ponto médio
+    do canal Vermelho (curva R com controle em x=0,5, y=0,55), aquecendo os
+    tons médios e o fundo da parede sem mexer em pretos/brancos."""
+    try:
+        cena.view_settings.use_curve_mapping = True
+        cm = cena.view_settings.curve_mapping
+        curva_r = cm.curves[0]  # 0 = R, 1 = G, 2 = B, 3 = luminância
+        pontos = list(curva_r.points)
+        for ponto in pontos:
+            if abs(ponto.location[0] - 0.5) < 0.001:
+                ponto.location[1] = 0.55
+                break
+        else:
+            curva_r.points.new(0.5, 0.55)
+        cm.update()
+        print(" > Curve Mapping: canal R aquecido nos tons médios (+0.05).")
+    except Exception as exc:  # noqa: BLE001 - color grading é cosmético
+        print(f" > [Aviso] Curve Mapping indisponível ({exc}).")
 
 
 def _configurar_bloom(cena):
