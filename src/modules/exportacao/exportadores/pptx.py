@@ -223,7 +223,7 @@ class ExportadorPPTX:
                 p_item.alignment = PP_ALIGN.CENTER
                 p_item.font.bold = True
                 p_item.font.size = Pt(13)
-                p_item.font.color.rgb = RGBColor(0, 0, 0)
+                p_item.font.color.rgb = RGBColor(255, 255, 255)
 
                 grupo.name = f"Travessa_{item['nome']}"
 

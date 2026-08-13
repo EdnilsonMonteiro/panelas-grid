@@ -63,7 +63,9 @@ class ExportadorPDF:
             titulo = (
                 nomes_opcoes[indice] if indice < len(nomes_opcoes) else TITULO_PADRAO
             )
-            ExportadorPDF._desenhar_pagina(c, pedido, indice + 1, titulo, w_page, h_page)
+            ExportadorPDF._desenhar_pagina(
+                c, pedido, indice + 1, titulo, w_page, h_page
+            )
             if indice < len(pedidos) - 1:
                 c.showPage()
 
@@ -101,9 +103,7 @@ class ExportadorPDF:
 
         # --- ALOCAÇÃO DAS PANELAS E PEÇAS ---
         caminho_panela_redonda = os.path.join(PASTA_ASSETS, "panela_redonda.png")
-        caminho_panela_retangular = os.path.join(
-            PASTA_ASSETS, "panela_retangular.png"
-        )
+        caminho_panela_retangular = os.path.join(PASTA_ASSETS, "panela_retangular.png")
 
         for item in modulo.engine.itens:
             w_dim = item["w"] * cm * escala
@@ -141,7 +141,7 @@ class ExportadorPDF:
                 else:
                     c.drawImage(img_path, x_pos, y_pos, w_dim, h_dim, mask="auto")
             else:
-                c.setFillColor(white)
+                c.setFillColor(black)
                 c.setStrokeColor(black)
                 if is_circulo:
                     c.ellipse(
@@ -152,7 +152,7 @@ class ExportadorPDF:
 
             if exibir_texto and min(w_dim, h_dim) >= 12:
                 # Texto do diâmetro/medidas centralizado na peça
-                c.setFillColor(black)
+                c.setFillColor(white)
                 c.setFont("Helvetica-Bold", tamanho_texto)
                 texto_panela = (
                     f"{int(item['w'])}"
@@ -265,6 +265,7 @@ class ExportadorPDF:
                 chave_y + 0.2 * cm,
             )
             c.setFont("Helvetica-Bold", 14)
+            c.setFillColor(black)
             c.drawCentredString(
                 offset_x + largura_real / 2,
                 chave_y - 0.6 * cm,
@@ -289,6 +290,7 @@ class ExportadorPDF:
                 c.translate(chave_x + 0.6 * cm, offset_y + altura_real / 2)
                 c.rotate(90)
                 c.setFont("Helvetica-Bold", 14)
+                c.setFillColor(black)
                 c.drawCentredString(0, 0, f"{modulo.engine.P:g}cm")
                 c.restoreState()
 
