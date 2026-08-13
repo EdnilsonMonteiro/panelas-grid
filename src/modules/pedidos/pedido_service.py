@@ -6,6 +6,8 @@ import sqlite3
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from PIL import Image
+
 from core.config import DIRETORIO_TEMPORARIO
 from modelos import ComposicaoBalcao
 from modules.exportacao.exportadores.pdf import ExportadorPDF
@@ -272,6 +274,7 @@ def exportar_proposta(conn: sqlite3.Connection, pedido_id: int) -> str:
 
     # Render 3D da Opção 1 no servidor (falha não derruba o PDF)
     caminho_png: Optional[str] = None
+    caminho_jpg: Optional[str] = None
     try:
         itens_render = [
             {
@@ -292,9 +295,12 @@ def exportar_proposta(conn: sqlite3.Connection, pedido_id: int) -> str:
             modulos_balcao_cm=larguras_placas if len(larguras_placas) > 1 else None,
         )
         caminho_png, _ = render_service.renderizar_png(request)
+        # Embutido em JPEG (qualidade ~85) para reduzir muito o tamanho do PDF
+        caminho_jpg = _converter_render_para_jpeg(caminho_png)
     except Exception as e:
         print(f" > [Proposta] Render 3D indisponível ({e}); usando placeholder.")
         caminho_png = None
+        caminho_jpg = None
 
     dados = {
         "nome_cliente": nome_cliente,
@@ -307,7 +313,7 @@ def exportar_proposta(conn: sqlite3.Connection, pedido_id: int) -> str:
             "numero": indice + 1,
             "titulo": titulos[indice] if indice < len(titulos) else "Self-Service Quente",
             "pedido": p,
-            "imagem_3d": caminho_png if indice == 0 else None,
+            "imagem_3d": (caminho_jpg or caminho_png) if indice == 0 else None,
         }
         for indice, p in enumerate(composicoes)
     ]
@@ -318,9 +324,34 @@ def exportar_proposta(conn: sqlite3.Connection, pedido_id: int) -> str:
     try:
         ExportadorProposta.gerar(dados, opcoes, caminho_pdf)
     finally:
-        if caminho_png and os.path.exists(caminho_png):
-            os.unlink(caminho_png)
+        for arquivo in (caminho_jpg, caminho_png):
+            if arquivo and os.path.exists(arquivo):
+                os.unlink(arquivo)
     return caminho_pdf
+
+
+def _converter_render_para_jpeg(caminho_png: str) -> Optional[str]:
+    """Converte o PNG do render 3D para JPEG (menor, para embutir no PDF).
+
+    Retorna o caminho do JPEG, ou `None` se a conversão falhar (o PDF usa o PNG).
+    """
+    try:
+        if not caminho_png or not os.path.exists(caminho_png):
+            return None
+        caminho_jpg = caminho_png.rsplit(".", 1)[0] + ".jpg"
+        with Image.open(caminho_png) as imagem:
+            imagem = imagem.convert("RGB")
+            if max(imagem.size) > 1100:
+                razao = 1100 / max(imagem.size)
+                imagem = imagem.resize(
+                    (max(1, int(imagem.width * razao)), max(1, int(imagem.height * razao))),
+                    Image.LANCZOS,
+                )
+            imagem.save(caminho_jpg, "JPEG", quality=85, optimize=True)
+        return caminho_jpg
+    except Exception as e:
+        print(f" > [Proposta] Falha ao converter render para JPEG ({e}); usando PNG.")
+        return None
 
 
 def _mapear_layout(linha: Dict[str, Any]) -> LayoutPedidoResposta:

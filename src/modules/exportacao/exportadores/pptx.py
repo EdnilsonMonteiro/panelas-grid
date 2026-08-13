@@ -8,6 +8,8 @@ from pptx.enum.shapes import MSO_CONNECTOR, MSO_SHAPE
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.util import Cm, Pt
 
+from ._imagens import caminho_panela_otimizado
+
 # ─────────────────────────────────────────────────────
 # LOGIC DE DIRETÓRIOS DINÂMICOS
 # ─────────────────────────────────────────────────────
@@ -177,11 +179,9 @@ class ExportadorPPTX:
                 # PASSO 1: Criar o Grupo no Slide
                 grupo = slide.shapes.add_group_shape()
 
-                caminho_panela_redonda = os.path.join(
-                    PASTA_ASSETS, "panela_redonda.png"
-                )
-                caminho_panela_retangular = os.path.join(
-                    PASTA_ASSETS, "panela_retangular.png"
+                caminho_panela_redonda = caminho_panela_otimizado("panela_redonda.png")
+                caminho_panela_retangular = caminho_panela_otimizado(
+                    "panela_retangular.png"
                 )
                 img_path = (
                     caminho_panela_redonda if is_circulo else caminho_panela_retangular

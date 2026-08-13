@@ -24,6 +24,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfgen import canvas
 from reportlab.platypus import Paragraph
 
+from ._imagens import caminho_panela_otimizado
 from .pdf import ExportadorPDF
 
 ARQUIVO_ATUAL = Path(__file__).resolve()
@@ -659,7 +660,7 @@ class ExportadorProposta:
 
             # Imagem da travessa abaixo da medida, na proporção real (dw:dh)
             imagem = "panela_redonda.png" if fmt == "circulo" else "panela_retangular.png"
-            caminho = os.path.join(PASTA_ASSETS, imagem)
+            caminho = caminho_panela_otimizado(imagem)
             max_w = larg_cel - 16
             max_h = area_h - 22
             razao = (dw or 1) / (dh or 1)

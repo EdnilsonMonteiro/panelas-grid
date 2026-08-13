@@ -7,6 +7,8 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import cm
 from reportlab.pdfgen import canvas
 
+from ._imagens import caminho_panela_otimizado
+
 ARQUIVO_ATUAL = Path(__file__).resolve()
 
 PASTA_RAIZ_PROJETO = next(
@@ -101,9 +103,9 @@ class ExportadorPDF:
             c.setStrokeColor(black)
             c.rect(offset_x, offset_y, largura_real, altura_real, fill=1, stroke=1)
 
-        # --- ALOCAÇÃO DAS PANELAS E PEÇAS ---
-        caminho_panela_redonda = os.path.join(PASTA_ASSETS, "panela_redonda.png")
-        caminho_panela_retangular = os.path.join(PASTA_ASSETS, "panela_retangular.png")
+        # --- ALOCAÇÃO DAS PANELAS E PEÇAS (imagens otimizadas) ---
+        caminho_panela_redonda = caminho_panela_otimizado("panela_redonda.png")
+        caminho_panela_retangular = caminho_panela_otimizado("panela_retangular.png")
 
         for item in modulo.engine.itens:
             w_dim = item["w"] * cm * escala
