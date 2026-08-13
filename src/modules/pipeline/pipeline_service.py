@@ -6,7 +6,7 @@ import unicodedata
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.config import DIRETORIO_TEMPORARIO
-from modelos import PedidoCliente
+from modelos import ComposicaoBalcao
 from modules.exportacao.exportadores.pdf import ExportadorPDF
 from modules.exportacao.exportadores.pptx import ExportadorPPTX
 from modules.pipeline.pipeline_schema import ProcessarLayoutRequest
@@ -43,7 +43,7 @@ def obter_schemas_secoes() -> List[Dict[str, Any]]:
 GAP_PLACAS_CM = 1.0
 
 
-def combinar_modulos_pedido(pedido):
+def combinar_modulos_composicao(composicao):
     """Combina os itens de todos os módulos (placas) lado a lado.
 
     Retorna (itens_combinados, largura_total_cm, profundidade_cm,
@@ -54,7 +54,7 @@ def combinar_modulos_pedido(pedido):
     larguras_placas = []
     x_deslocamento = 0.0
     profundidade = 0.0
-    for modulo in pedido.modulos:
+    for modulo in composicao.modulos:
         larguras_placas.append(modulo.engine.L)
         profundidade = max(profundidade, modulo.engine.P)
         for item in modulo.engine.itens:
@@ -66,32 +66,32 @@ def combinar_modulos_pedido(pedido):
     return itens, largura_total, profundidade, larguras_placas
 
 
-def calcular_layout(dados: ProcessarLayoutRequest) -> PedidoCliente:
-    """Executa o motor geométrico e devolve o pedido com os módulos calculados."""
+def calcular_layout(dados: ProcessarLayoutRequest) -> ComposicaoBalcao:
+    """Executa o motor geométrico e devolve a composição com os módulos calculados."""
     nome_cliente = dados.nome_cliente.strip() or "Cliente Não Informado"
-    pedido = PedidoCliente(nome_cliente=nome_cliente)
-    return construir_pipeline_desde_json(dados.model_dump(mode="json"), pedido)
+    composicao = ComposicaoBalcao(nome_cliente=nome_cliente)
+    return construir_pipeline_desde_json(dados.model_dump(mode="json"), composicao)
 
 
 def processar_layout_e_exportar(
     dados: ProcessarLayoutRequest,
-) -> Tuple[str, str, str, PedidoCliente]:
+) -> Tuple[str, str, str, ComposicaoBalcao]:
     """Calcula o layout e gera PDF + PPTX no diretório temporário.
 
-    Retorna (caminho_pdf, caminho_pptx, nome_slug, pedido_calculado).
-    O pedido devolvido permite inspecionar os itens alocados pelo motor
+    Retorna (caminho_pdf, caminho_pptx, nome_slug, composicao_calculada).
+    A composição devolvida permite inspecionar os itens alocados pelo motor
     (modelo stateless: o front-end os reutiliza na renderização 3D).
     """
-    pedido = calcular_layout(dados)
+    composicao = calcular_layout(dados)
     nome_slug = normalizar_slug_cliente(dados.nome_cliente)
 
     caminho_pdf = os.path.join(DIRETORIO_TEMPORARIO, f"layout_{nome_slug}.pdf")
     caminho_pptx = os.path.join(DIRETORIO_TEMPORARIO, f"layout_{nome_slug}.pptx")
 
-    ExportadorPDF.gerar_layout(pedido, caminho_pdf)
-    ExportadorPPTX.gerar_layout(pedido, caminho_pptx)
+    ExportadorPDF.gerar_layout(composicao, caminho_pdf)
+    ExportadorPPTX.gerar_layout(composicao, caminho_pptx)
 
-    return caminho_pdf, caminho_pptx, nome_slug, pedido
+    return caminho_pdf, caminho_pptx, nome_slug, composicao
 
 
 def ler_arquivo_base64(caminho: str) -> str:

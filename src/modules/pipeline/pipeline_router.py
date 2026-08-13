@@ -53,7 +53,7 @@ def processar_pipeline_v1(dados: ProcessarLayoutRequest) -> ProcessarV1Response:
     POST /api/v1/buffet/render-3d, sem reprocessar a geometria (stateless).
     """
     try:
-        caminho_pdf, _, nome_slug, pedido = (
+        caminho_pdf, _, nome_slug, composicao = (
             pipeline_service.processar_layout_e_exportar(dados)
         )
     except ValueError as e:
@@ -66,7 +66,7 @@ def processar_pipeline_v1(dados: ProcessarLayoutRequest) -> ProcessarV1Response:
     # Multiplacas: combina os itens das placas e informa as larguras de cada
     # placa para o render 3D (placas juntas). Se for uma única placa, mantém.
     itens_combinados, largura_total, profundidade, larguras_placas = (
-        pipeline_service.combinar_modulos_pedido(pedido)
+        pipeline_service.combinar_modulos_composicao(composicao)
     )
 
     return ProcessarV1Response(
@@ -76,5 +76,5 @@ def processar_pipeline_v1(dados: ProcessarLayoutRequest) -> ProcessarV1Response:
         largura_balcao_cm=largura_total,
         profundidade_balcao_cm=profundidade,
         itens=[ItemLayout(**item) for item in itens_combinados],
-        modulos_balcao_cm=larguras_placas if len(pedido.modulos) > 1 else [],
+        modulos_balcao_cm=larguras_placas if len(composicao.modulos) > 1 else [],
     )

@@ -1,10 +1,10 @@
-from exportadores.pdf import ExportadorPDF
-from exportadores.pptx import ExportadorPPTX
-from modelos import PedidoCliente
+from modules.exportacao.exportadores.pdf import ExportadorPDF
+from modules.exportacao.exportadores.pptx import ExportadorPPTX
+from modelos import ComposicaoBalcao
 from secoes import SecaoItensFixos, SecaoPanelasRedondasComGaps, SecaoTorresGulosas
 
 print("\n=== PROCESSANDO PEDIDO - ENGENHARIA DE LAYOUT POR SEÇÕES ===")
-pedido_combo = PedidoCliente("Combo Rampa Otimizada")
+composicao_combo = ComposicaoBalcao("Combo Rampa Otimizada")
 
 cat_completo = [
     {"nome": "Cuba G", "w": 21, "h": 53, "rot": True},
@@ -23,7 +23,7 @@ cat_s4 = [
     {"nome": "Guarnição P", "w": 21, "h": 13, "rot": True},
 ]
 
-balcao_grande = pedido_combo.adicionar_modulo(
+balcao_grande = composicao_combo.adicionar_modulo(
     tipo_rampa="quente", largura=190, profundidade=95
 )
 
@@ -41,7 +41,7 @@ balcao_grande.processar_layout(cat_completo)
 # CENÁRIO 2: O caso dos 4 grids menores independentes (Ex: 75x50)
 # =========================================================================
 # for i in range(4):
-#    grid_pequeno = pedido_combo.adicionar_modulo(
+#    grid_pequeno = composicao_combo.adicionar_modulo(
 #        tipo_rampa="quente", largura=75, profundidade=50
 #    )
 #
@@ -49,5 +49,5 @@ balcao_grande.processar_layout(cat_completo)
 #    grid_pequeno.adicionar_secao(SecaoMioloTorres(nome=f"Grid {i + 1} - Apenas Cubas"))
 #    grid_pequeno.processar_layout(cat_completo)
 
-ExportadorPDF.gerar_layout(pedido_combo, "layout_otimizado_generico.pdf")
-ExportadorPPTX.gerar_layout(pedido_combo, "layout_otimizado_editavel.pptx")
+ExportadorPDF.gerar_layout(composicao_combo, "layout_otimizado_generico.pdf")
+ExportadorPPTX.gerar_layout(composicao_combo, "layout_otimizado_editavel.pptx")

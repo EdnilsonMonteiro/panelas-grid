@@ -51,7 +51,14 @@ class ModuloBalcao:
             )
 
 
-class PedidoCliente:
+class ComposicaoBalcao:
+    """Container das placas/módulos de uma opção de layout.
+
+    Representa uma única opção visual contendo 1 ou N balcões (`ModuloBalcao`),
+    alinhado ao domínio geométrico (DDD) — não confundir com o cadastro de
+    "Pedido" do banco (`pedidos_cliente`).
+    """
+
     def __init__(self, nome_cliente):
         self.nome_cliente = nome_cliente
         self.modulos = []

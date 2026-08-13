@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from core.config import DIRETORIO_TEMPORARIO
-from modelos import PedidoCliente
+from modelos import ComposicaoBalcao
 from modules.exportacao.exportadores.pdf import ExportadorPDF
 from modules.exportacao.exportadores.pptx import ExportadorPPTX
 from modules.exportacao.exportadores.proposta import ExportadorProposta
@@ -20,7 +20,7 @@ from modules.pedidos.pedido_schema import (
     PedidoResposta,
 )
 from modules.pipeline.pipeline_service import (
-    combinar_modulos_pedido,
+    combinar_modulos_composicao,
     normalizar_slug_cliente,
 )
 from modules.render import render_service
@@ -169,17 +169,19 @@ def reordenar_layouts(
     repo.reordenar(conn, ordered_layout_ids)
 
 
-def _reconstruir_pedidos(conn: sqlite3.Connection, pedido_id: int) -> List[PedidoCliente]:
-    """Reconstrói os PedidoCliente a partir das opções salvas (motor stateless)."""
+def _reconstruir_composicoes(
+    conn: sqlite3.Connection, pedido_id: int
+) -> List[ComposicaoBalcao]:
+    """Reconstrói as ComposicaoBalcao a partir das opções salvas (motor stateless)."""
     pedido = repo.obter(conn, pedido_id)
     if pedido is None:
         raise ValueError("Pedido não encontrado.")
 
     nome_cliente = pedido["nome_cliente"] or pedido["nome_pedido"]
 
-    pedidos: List[PedidoCliente] = []
+    composicoes: List[ComposicaoBalcao] = []
     for linha in repo.listar_layouts(conn, pedido_id):
-        pedido_calculado = PedidoCliente(nome_cliente=nome_cliente)
+        composicao_calculada = ComposicaoBalcao(nome_cliente=nome_cliente)
         modulos = json.loads(linha["modulos_json"]) if linha.get("modulos_json") else []
         if modulos:
             payload = {"modulos": modulos}
@@ -188,9 +190,9 @@ def _reconstruir_pedidos(conn: sqlite3.Connection, pedido_id: int) -> List[Pedid
                 "configuracao_balcao": json.loads(linha["configuracao_balcao"]),
                 "pipeline_secoes": json.loads(linha["pipeline_secoes"]),
             }
-        construir_pipeline_desde_json(payload, pedido_calculado)
-        pedidos.append(pedido_calculado)
-    return pedidos
+        construir_pipeline_desde_json(payload, composicao_calculada)
+        composicoes.append(composicao_calculada)
+    return composicoes
 
 
 def _reconstruir_titulos(conn: sqlite3.Connection, pedido_id: int) -> List[str]:
@@ -207,15 +209,15 @@ def exportar_pdf(conn: sqlite3.Connection, pedido_id: int) -> str:
     if pedido is None:
         raise ValueError("Pedido não encontrado.")
 
-    pedidos = _reconstruir_pedidos(conn, pedido_id)
-    if not pedidos:
+    composicoes = _reconstruir_composicoes(conn, pedido_id)
+    if not composicoes:
         raise ValueError("O pedido não possui opções salvas para exportar.")
 
     nome_slug = normalizar_slug_cliente(pedido["nome_pedido"])
     caminho_pdf = os.path.join(DIRETORIO_TEMPORARIO, f"layout_{nome_slug}_opcoes.pdf")
 
     ExportadorPDF.gerar_layouts(
-        pedidos,
+        composicoes,
         _reconstruir_titulos(conn, pedido_id),
         caminho_pdf,
     )
@@ -228,15 +230,15 @@ def exportar_pptx(conn: sqlite3.Connection, pedido_id: int) -> str:
     if pedido is None:
         raise ValueError("Pedido não encontrado.")
 
-    pedidos = _reconstruir_pedidos(conn, pedido_id)
-    if not pedidos:
+    composicoes = _reconstruir_composicoes(conn, pedido_id)
+    if not composicoes:
         raise ValueError("O pedido não possui opções salvas para exportar.")
 
     nome_slug = normalizar_slug_cliente(pedido["nome_pedido"])
     caminho_pptx = os.path.join(DIRETORIO_TEMPORARIO, f"layout_{nome_slug}_opcoes.pptx")
 
     ExportadorPPTX.gerar_layouts(
-        pedidos,
+        composicoes,
         _reconstruir_titulos(conn, pedido_id),
         caminho_pptx,
     )
@@ -253,8 +255,8 @@ def exportar_proposta(conn: sqlite3.Connection, pedido_id: int) -> str:
     if pedido is None:
         raise ValueError("Pedido não encontrado.")
 
-    pedidos = _reconstruir_pedidos(conn, pedido_id)
-    if not pedidos:
+    composicoes = _reconstruir_composicoes(conn, pedido_id)
+    if not composicoes:
         raise ValueError(
             "O pedido não possui opções salvas para gerar a proposta comercial."
         )
@@ -265,7 +267,7 @@ def exportar_proposta(conn: sqlite3.Connection, pedido_id: int) -> str:
 
     # Combina as placas (multiplacas) para o render 3D e as medidas do cabeçalho
     itens_combinados, largura_total, profundidade, larguras_placas = (
-        combinar_modulos_pedido(pedidos[0])
+        combinar_modulos_composicao(composicoes[0])
     )
 
     # Render 3D da Opção 1 no servidor (falha não derruba o PDF)
@@ -307,7 +309,7 @@ def exportar_proposta(conn: sqlite3.Connection, pedido_id: int) -> str:
             "pedido": p,
             "imagem_3d": caminho_png if indice == 0 else None,
         }
-        for indice, p in enumerate(pedidos)
+        for indice, p in enumerate(composicoes)
     ]
 
     nome_slug = normalizar_slug_cliente(pedido["nome_pedido"])

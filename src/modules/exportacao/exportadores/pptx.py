@@ -36,7 +36,7 @@ class ExportadorPPTX:
     def gerar_layouts(pedidos: List, nomes_opcoes: List[str], nome_arquivo: str):
         """Gera o PPTX com um slide por pedido (uma 'Opção' por slide).
 
-        `pedidos` é a lista de PedidoCliente calculados e `nomes_opcoes`
+        `pedidos` é a lista de ComposicaoBalcao calculadas e `nomes_opcoes`
         contém o título (subtítulo) de cada opção, na mesma ordem.
         """
         prs = Presentation()

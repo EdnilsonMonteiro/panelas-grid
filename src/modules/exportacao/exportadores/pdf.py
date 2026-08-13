@@ -32,7 +32,7 @@ class ExportadorPDF:
     def gerar_layouts(pedidos: List, nomes_opcoes: List[str], nome_arquivo: str):
         """Gera o PDF com uma página por pedido (uma 'Opção' por página).
 
-        `pedidos` é a lista de PedidoCliente calculados e `nomes_opcoes`
+        `pedidos` é a lista de ComposicaoBalcao calculadas e `nomes_opcoes`
         contém o título (subtítulo) de cada opção, na mesma ordem.
         """
         ESCALA = 0.1  # Escala 1:10

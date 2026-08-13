@@ -209,7 +209,7 @@ class ExportadorProposta:
         todos os blocos (header, central, pistas, dimensões, sugestão e resumo).
 
         `dados`: nome_cliente, data, largura_cm, profundidade_cm (da Opção 1).
-        `opcoes`: lista de {numero, titulo, pedido (PedidoCliente),
+        `opcoes`: lista de {numero, titulo, pedido (ComposicaoBalcao),
                             imagem_3d (caminho PNG | None)} — opcoes[0] é a Opção 1.
         """
         W = landscape(A4)[0]
