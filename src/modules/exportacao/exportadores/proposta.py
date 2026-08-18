@@ -188,17 +188,42 @@ def _resumo_pistas(pedido) -> Dict[str, Any]:
 
 
 def _dimensoes_utilizadas(pedido) -> List[Tuple[str, int, int, int]]:
-    """Dimensões únicas (formato, w, h) das travessas, por frequência (todas as placas)."""
+    """Dimensões únicas das travessas, da menor para a maior (todas as placas).
+
+    Retangulares são deduplicadas por rotação (21x13 ≡ 13x21), somando a
+    quantidade; mantém-se a primeira orientação encontrada. A ordenação compara
+    o primeiro número (à esquerda de 'x') e, em caso de empate, o segundo.
+    """
     contagem: Counter = Counter()
+    representacao: Dict[Any, Tuple[str, int, int]] = {}
+
+    def _chave(fmt: str, w: int, h: int) -> Tuple[Any, ...]:
+        if fmt == "circulo":
+            d = max(w, h)
+            return ("circulo", d)
+        return ("retangulo", min(w, h), max(w, h))
+
     for modulo in pedido.modulos:
         for item in modulo.engine.itens:
             fmt = item.get("formato", "retangulo")
             w = int(round(item.get("w", 0)))
             h = int(round(item.get("h", 0)))
             if w > 0 and h > 0:
-                contagem[(fmt, w, h)] += 1
-    ordenadas = sorted(contagem, key=lambda c: (-contagem[c], c[1], c[2]))
-    return [(fmt, w, h, contagem[(fmt, w, h)]) for fmt, w, h in ordenadas]
+                chave = _chave(fmt, w, h)
+                contagem[chave] += 1
+                representacao.setdefault(
+                    chave,
+                    (fmt, max(w, h), max(w, h))
+                    if fmt == "circulo"
+                    else (fmt, w, h),
+                )
+
+    resultado = [
+        (fmt, w, h, contagem[chave])
+        for chave, (fmt, w, h) in representacao.items()
+    ]
+    resultado.sort(key=lambda c: (c[1], c[2]))
+    return resultado
 
 
 class ExportadorProposta:
@@ -649,6 +674,12 @@ class ExportadorProposta:
         area_base = y + 10
         area_h = area_topo - area_base
 
+        max_w = larg_cel - 16
+        max_h = area_h - 22
+        max_dw = max((d[1] for d in visiveis), default=1)
+        max_dh = max((d[2] for d in visiveis), default=1)
+        escala = min(max_w / max_dw, max_h / max_dh)
+
         for i, (fmt, dw, dh, _qtd) in enumerate(visiveis):
             cx = x0 + i * (larg_cel + pad) + larg_cel / 2
 
@@ -658,24 +689,12 @@ class ExportadorProposta:
             c.setFont("Helvetica-Bold", 10)
             c.drawCentredString(cx, area_topo - 12, medida)
 
-            # Imagem da travessa abaixo da medida, na proporção real (dw:dh)
+            # Imagem da travessa abaixo da medida, na proporção real (dw:dh),
+            # com escala única para todas as travessas do box.
+            dw_im = dw * escala
+            dh_im = dh * escala
             imagem = "panela_redonda.png" if fmt == "circulo" else "panela_retangular.png"
             caminho = caminho_panela_otimizado(imagem)
-            max_w = larg_cel - 16
-            max_h = area_h - 22
-            razao = (dw or 1) / (dh or 1)
-            if razao >= 1:
-                dw_im = max_w
-                dh_im = max_w / razao
-                if dh_im > max_h:
-                    dh_im = max_h
-                    dw_im = max_h * razao
-            else:
-                dh_im = max_h
-                dw_im = max_h * razao
-                if dw_im > max_w:
-                    dw_im = max_w
-                    dh_im = max_w / razao
             if os.path.exists(caminho):
                 try:
                     c.drawImage(
