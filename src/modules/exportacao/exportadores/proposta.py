@@ -51,6 +51,11 @@ AZUL_FUNDO = colors.HexColor("#E6F5F8")
 
 GAP_PLACAS_CM = 1.0  # espaçamento entre placas (multiplacas)
 
+# Acima desta largura (cm) da Opção 1, a proposta usa o layout "largo":
+# o 3D ocupa toda a largura e "Detalhes Importantes" vai para o rodapé,
+# ao lado de "Sugestão de Uso" (50/50).
+LARGURA_LIMITE_WIDE_CM = 270.0
+
 # ─────────────────────────────────────────────────────
 # ESTILOS DE TEXTO
 # ─────────────────────────────────────────────────────
@@ -242,14 +247,18 @@ class ExportadorProposta:
         M = 1.2 * cm
 
         ALT_HEADER = 130
-        ALT_CENTRAL = 200
+        ALT_CENTRAL = 320
         ALT_INFERIOR = 150
         ALT_DIMENSOES = 110
-        ALT_SUGESTAO = 95
         ALT_RESUMO = 70
         GAP = 16
         TOPO = 36
         BASE = 40
+
+        # Layout largo (>270cm): o 3D ocupa toda a largura e o rodapé vira
+        # "Detalhes Importantes" + "Sugestão de Uso" em 50/50 (mais alto).
+        modo_wide = dados.get("largura_cm", 0) > LARGURA_LIMITE_WIDE_CM
+        ALT_SUGESTAO = 200 if modo_wide else 95
 
         H = (
             TOPO
@@ -326,67 +335,38 @@ class ExportadorProposta:
         y_main_topo = y_topo(cursor)
         y_main_base = y_topo(cursor + ALT_CENTRAL)
         h_main = y_main_topo - y_main_base
-
-        # Bloco central: 3D ocupa 80% e "Detalhes Importantes" 20%
-        GAP_MEIO = 16
-        w_3d = (W - 2 * M - GAP_MEIO) * 0.8
-        w_det = (W - 2 * M - GAP_MEIO) * 0.2
-        x_dir = x_esq + w_3d + GAP_MEIO
-
-        # --- B1. Render 3D da Opção 1 ---
-        ExportadorProposta._caixa(c, x_esq, y_main_base, w_3d, h_main)
-        ExportadorProposta._badge(
-            c, x_esq, y_main_topo, "Visualização 3D - Opção 1", GRAFITE
-        )
-        # Área da imagem abaixo do badge (reserva ~28pt no topo da caixa)
         y_img_topo = y_main_topo - 28
         y_img_base = y_main_base + 8
         h_img = y_img_topo - y_img_base
         imagem_3d = opcoes[0].get("imagem_3d") if opcoes else None
-        if imagem_3d and os.path.exists(imagem_3d):
-            try:
-                c.drawImage(
-                    imagem_3d,
-                    x_esq + 8,
-                    y_img_base,
-                    w_3d - 16,
-                    h_img,
-                    preserveAspectRatio=True,
-                    mask="auto",
-                )
-            except Exception as e:
-                print(f" > [Proposta] Falha ao embutir render 3D: {e}")
-                ExportadorProposta._placeholder_3d(
-                    c, x_esq, y_img_base, w_3d, h_img
-                )
-        else:
-            ExportadorProposta._placeholder_3d(c, x_esq, y_img_base, w_3d, h_img)
 
-        # --- B2. Caixa "Detalhes Importantes" ---
-        ExportadorProposta._caixa(c, x_dir, y_main_base, w_det, h_main, preencher=True)
+        # --- B1. Render 3D da Opção 1 ---
+        if modo_wide:
+            # Layout largo: o 3D ocupa toda a largura disponível
+            w_3d = W - 2 * M
+            x_3d = x_esq
+        else:
+            # 75/25: a visualização 3D ocupa o maior espaço
+            GAP_MEIO = 16
+            w_3d = (W - 2 * M - GAP_MEIO) * 0.75
+            x_3d = x_esq
+
+        ExportadorProposta._caixa(c, x_3d, y_main_base, w_3d, h_main)
         ExportadorProposta._badge(
-            c, x_dir, y_main_topo, "Detalhes Importantes", GRAFITE
+            c, x_3d, y_main_topo, "Visualização 3D - Opção 1", GRAFITE
         )
-        bullets = [
-            "Equipamentos portáteis e discretos",
-            "Instalação rápida e prática",
-            "Ideal para autosserviço ou atendimento assistido",
-            "Visual leve, elegante e aconchegante",
-        ]
-        est_det = ParagraphStyle(
-            "detalhes_estreito",
-            fontName="Helvetica",
-            fontSize=9,
-            leading=13,
-            textColor=TEXTO,
-            leftIndent=8,
-        )
-        y_b = y_main_topo - 30
-        for texto in bullets:
-            par = Paragraph(f"•&nbsp;&nbsp;{texto}", est_det)
-            _, par_h = par.wrapOn(c, w_det - 20, 200)
-            par.drawOn(c, x_dir + 10, y_b - par_h)
-            y_b -= par_h + 5
+        if not ExportadorProposta._desenhar_render_3d(
+            c, imagem_3d, x_3d + 8, y_img_base, w_3d - 16, h_img
+        ):
+            ExportadorProposta._placeholder_3d(c, x_3d, y_img_base, w_3d, h_img)
+
+        # --- B2. Caixa "Detalhes Importantes" (apenas no layout padrão) ---
+        if not modo_wide:
+            x_dir = x_3d + w_3d + GAP_MEIO
+            w_det = (W - 2 * M) - w_3d - GAP_MEIO
+            ExportadorProposta._desenhar_detalhes(
+                c, x_dir, y_main_base, w_det, h_main
+            )
 
         cursor += ALT_CENTRAL + GAP
 
@@ -436,25 +416,25 @@ class ExportadorProposta:
         cursor += ALT_DIMENSOES + GAP
 
         # ───────────────────────────────────────
-        # E. RODAPÉ — SUGESTÃO DE USO
+        # E. RODAPÉ — SUGESTÃO DE USO (e DETALHES no layout largo)
         # ───────────────────────────────────────
         y_foot_topo = y_topo(cursor)
         y_foot_base = y_topo(cursor + ALT_SUGESTAO)
-        ExportadorProposta._caixa(
-            c, M, y_foot_base, W - 2 * M, y_foot_topo - y_foot_base, preencher=True
-        )
-        c.setFillColor(GRAFITE)
-        c.setFont("Helvetica-Bold", 13)
-        c.drawString(M + 14, y_foot_topo - 22, "Sugestão de Uso")
-        texto_sugestao = (
-            "Para manter a elegância do buffet e a fluidez do atendimento, "
-            "recomendamos dispor os pratos e talheres no início da pista aquecida, "
-            "seguidos pelas opções quentes principais. A pista fria deve comportar "
-            "saladas, molhos e acompanhamentos frescos de forma simétrica e acessível."
-        )
-        par = Paragraph(texto_sugestao, ESTILO_SUGESTAO)
-        par.wrapOn(c, W - 2 * M - 28, 200)
-        par.drawOn(c, M + 14, y_foot_base + 12)
+        h_foot = y_foot_topo - y_foot_base
+        if modo_wide:
+            # Layout largo: "Detalhes Importantes" + "Sugestão de Uso" em 50/50
+            GAP_RODAPE = 16
+            w_metade = (W - 2 * M - GAP_RODAPE) / 2
+            ExportadorProposta._desenhar_detalhes(
+                c, M, y_foot_base, w_metade, h_foot
+            )
+            ExportadorProposta._desenhar_sugestao(
+                c, M + w_metade + GAP_RODAPE, y_foot_base, w_metade, h_foot
+            )
+        else:
+            ExportadorProposta._desenhar_sugestao(
+                c, M, y_foot_base, W - 2 * M, h_foot
+            )
 
         cursor += ALT_SUGESTAO + GAP
 
@@ -519,6 +499,89 @@ class ExportadorProposta:
         c.setFillColor(colors.HexColor("#9CA3AF"))
         c.setFont("Helvetica", 11)
         c.drawCentredString(x + w / 2, y + h / 2, "Visualização 3D indisponível")
+
+    @staticmethod
+    def _desenhar_render_3d(c, caminho, x, y, w, h):
+        """Desenha o render 3D preenchendo o retângulo (cover).
+
+        Mantém a proporção da imagem e recorta o excesso na vertical com
+        ancoragem levemente inferior (mantém a mesa e as travessas; corta
+        parede/piso). Devolve False se a imagem estiver ausente/inválida.
+        """
+        if not caminho or not os.path.exists(caminho):
+            return False
+        try:
+            from reportlab.lib.utils import ImageReader
+
+            iw, ih = ImageReader(caminho).getSize()
+            if iw <= 0 or ih <= 0:
+                return False
+        except Exception:
+            return False
+
+        razao_img = iw / ih
+        razao_box = w / h
+        if razao_img >= razao_box:
+            # Imagem mais larga que a caixa: a altura casa, sobra largura
+            dh = h
+            dw = h * razao_img
+            dx = x + (w - dw) / 2
+            dy = y
+        else:
+            # Imagem mais alta que a caixa: a largura casa, sobra altura.
+            # O excesso é recortado preferencialmente na parte de CIMA
+            # (parede) em vez da parte de baixo (frente da mesa).
+            dw = w
+            dh = w / razao_img
+            dx = x
+            dy = y - (dh - h) * 0.15
+        try:
+            p = c.beginPath()
+            p.rect(x, y, w, h)
+            c.saveState()
+            c.clipPath(p, stroke=0, fill=0)
+            c.drawImage(caminho, dx, dy, dw, dh, mask="auto")
+            c.restoreState()
+            return True
+        except Exception as e:
+            print(f" > [Proposta] Falha ao desenhar render 3D: {e}")
+            return False
+
+    @staticmethod
+    def _desenhar_detalhes(c, x, y, w, h):
+        """Caixa 'Detalhes Importantes' com os bullets logo abaixo do badge."""
+        ExportadorProposta._caixa(c, x, y, w, h, preencher=True)
+        ExportadorProposta._badge(c, x, y + h, "Detalhes Importantes", GRAFITE)
+        bullets = [
+            "Equipamentos portáteis e discretos",
+            "Instalação rápida e prática",
+            "Ideal para autosserviço ou atendimento assistido",
+            "Visual leve, elegante e aconchegante",
+        ]
+        y_b = y + h - 30
+        for texto in bullets:
+            par = Paragraph(f"•&nbsp;&nbsp;{texto}", ESTILO_DETALHES)
+            _, par_h = par.wrapOn(c, w - 24, 200)
+            par.drawOn(c, x + 12, y_b - par_h)
+            y_b -= par_h + 6
+
+    @staticmethod
+    def _desenhar_sugestao(c, x, y, w, h):
+        """Caixa 'Sugestão de Uso' (preenchida) com o texto de recomendação."""
+        ExportadorProposta._caixa(c, x, y, w, h, preencher=True)
+        c.setFillColor(GRAFITE)
+        c.setFont("Helvetica-Bold", 13)
+        c.drawString(x + 14, y + h - 22, "Sugestão de Uso")
+        texto_sugestao = (
+            "Para manter a elegância do buffet e a fluidez do atendimento, "
+            "recomendamos dispor os pratos e talheres no início da pista aquecida, "
+            "seguidos pelas opções quentes principais. A pista fria deve comportar "
+            "saladas, molhos e acompanhamentos frescos de forma simétrica e acessível."
+        )
+        par = Paragraph(texto_sugestao, ESTILO_SUGESTAO)
+        _, par_h = par.wrapOn(c, w - 28, 200)
+        # Texto logo abaixo do título (sem grande vão no meio da caixa)
+        par.drawOn(c, x + 14, y + h - 30 - par_h)
 
     @staticmethod
     def _desenhar_pistas(c, x, y, w, h, pedido):
