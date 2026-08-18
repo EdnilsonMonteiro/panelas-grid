@@ -322,14 +322,19 @@ class ExportadorProposta:
         # B. BLOCO CENTRAL (3D + Detalhes)
         # ───────────────────────────────────────
         x_esq = M
-        x_dir = W / 2 + 8
-        w_meio = W / 2 - M - 8
+        w_meio = W / 2 - M - 8  # usado no bloco inferior (C/D) — não alterar
         y_main_topo = y_topo(cursor)
         y_main_base = y_topo(cursor + ALT_CENTRAL)
         h_main = y_main_topo - y_main_base
 
+        # Bloco central: 3D ocupa 80% e "Detalhes Importantes" 20%
+        GAP_MEIO = 16
+        w_3d = (W - 2 * M - GAP_MEIO) * 0.8
+        w_det = (W - 2 * M - GAP_MEIO) * 0.2
+        x_dir = x_esq + w_3d + GAP_MEIO
+
         # --- B1. Render 3D da Opção 1 ---
-        ExportadorProposta._caixa(c, x_esq, y_main_base, w_meio, h_main)
+        ExportadorProposta._caixa(c, x_esq, y_main_base, w_3d, h_main)
         ExportadorProposta._badge(
             c, x_esq, y_main_topo, "Visualização 3D - Opção 1", GRAFITE
         )
@@ -344,7 +349,7 @@ class ExportadorProposta:
                     imagem_3d,
                     x_esq + 8,
                     y_img_base,
-                    w_meio - 16,
+                    w_3d - 16,
                     h_img,
                     preserveAspectRatio=True,
                     mask="auto",
@@ -352,13 +357,13 @@ class ExportadorProposta:
             except Exception as e:
                 print(f" > [Proposta] Falha ao embutir render 3D: {e}")
                 ExportadorProposta._placeholder_3d(
-                    c, x_esq, y_img_base, w_meio, h_img
+                    c, x_esq, y_img_base, w_3d, h_img
                 )
         else:
-            ExportadorProposta._placeholder_3d(c, x_esq, y_img_base, w_meio, h_img)
+            ExportadorProposta._placeholder_3d(c, x_esq, y_img_base, w_3d, h_img)
 
         # --- B2. Caixa "Detalhes Importantes" ---
-        ExportadorProposta._caixa(c, x_dir, y_main_base, w_meio, h_main, preencher=True)
+        ExportadorProposta._caixa(c, x_dir, y_main_base, w_det, h_main, preencher=True)
         ExportadorProposta._badge(
             c, x_dir, y_main_topo, "Detalhes Importantes", GRAFITE
         )
@@ -368,12 +373,20 @@ class ExportadorProposta:
             "Ideal para autosserviço ou atendimento assistido",
             "Visual leve, elegante e aconchegante",
         ]
+        est_det = ParagraphStyle(
+            "detalhes_estreito",
+            fontName="Helvetica",
+            fontSize=9,
+            leading=13,
+            textColor=TEXTO,
+            leftIndent=8,
+        )
         y_b = y_main_topo - 30
         for texto in bullets:
-            par = Paragraph(f"•&nbsp;&nbsp;{texto}", ESTILO_DETALHES)
-            _, par_h = par.wrapOn(c, w_meio - 24, 200)
-            par.drawOn(c, x_dir + 12, y_b - par_h)
-            y_b -= par_h + 6
+            par = Paragraph(f"•&nbsp;&nbsp;{texto}", est_det)
+            _, par_h = par.wrapOn(c, w_det - 20, 200)
+            par.drawOn(c, x_dir + 10, y_b - par_h)
+            y_b -= par_h + 5
 
         cursor += ALT_CENTRAL + GAP
 
@@ -389,12 +402,13 @@ class ExportadorProposta:
 
         if tem_outras:
             # Esquerda: composição das pistas (cards); Direita: outras opções
+            x_dir_inf = W / 2 + 8  # divisão 50/50 independente do bloco central
             w_comp = w_meio
             ExportadorProposta._desenhar_pistas(
                 c, x_esq, y_bot_base, w_comp, h_bot, opcoes[0]["pedido"]
             )
             ExportadorProposta._desenhar_outras_opcoes(
-                c, x_dir, y_bot_base, w_meio, h_bot, outras_opcoes
+                c, x_dir_inf, y_bot_base, w_meio, h_bot, outras_opcoes
             )
         else:
             # Regra 1: sem outras opções, as pistas expandem para preencher

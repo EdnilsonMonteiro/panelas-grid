@@ -104,7 +104,7 @@ def montar_job_render(
     glb_dir=None,
     resolucao=(1280, 960),
     amostras=64,
-    angulo_camera_graus=75.0,
+    angulo_camera_graus=45.0,
     exibir_cotas=False,
     modulos_balcao_cm=None,
 ):
@@ -197,8 +197,8 @@ def montar_job_render(
         "placas": placas,
         "camera": {
             "angulo_elevacao_graus": float(angulo_camera_graus),
-            # Cotas projetam ~0,4 m além das faces do balcão: margem extra
-            "fator_margem": 1.45 if exibir_cotas else 1.3,
+            # Cotas projetam ~0,4 m além das faces do balcão: ocupação menor
+            "fator_ocupacao": 0.7 if exibir_cotas else 0.9,
         },
         "cotas": {
             "exibir": bool(exibir_cotas),
