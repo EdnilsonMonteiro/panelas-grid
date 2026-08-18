@@ -154,6 +154,57 @@ def salvar_layout(
     )
 
 
+def atualizar_layout(
+    conn: sqlite3.Connection, layout_id: int, dados: LayoutPedidoEntrada
+) -> LayoutPedidoResposta:
+    """Atualiza o conteúdo de uma opção existente (edição)."""
+    layout = repo.obter_layout(conn, layout_id)
+    if layout is None:
+        raise ValueError("Opção não encontrada.")
+
+    config_json = json.dumps(
+        dados.configuracao_balcao.model_dump(mode="json"), ensure_ascii=False
+    )
+    pipeline_json = json.dumps(
+        [secao.model_dump(mode="json") for secao in dados.pipeline_secoes],
+        ensure_ascii=False,
+    )
+    modulos_json = None
+    if dados.modulos:
+        modulos_json = json.dumps(
+            [
+                {
+                    "configuracao_balcao": m.configuracao_balcao.model_dump(
+                        mode="json"
+                    ),
+                    "pipeline_secoes": [
+                        s.model_dump(mode="json") for s in m.pipeline_secoes
+                    ],
+                }
+                for m in dados.modulos
+            ],
+            ensure_ascii=False,
+        )
+
+    repo.atualizar_layout(
+        conn,
+        layout_id,
+        dados.titulo,
+        config_json,
+        pipeline_json,
+        modulos_json=modulos_json,
+    )
+
+    return LayoutPedidoResposta(
+        id=str(layout_id),
+        opcao_numero=int(layout["opcao_numero"]),
+        titulo=dados.titulo,
+        configuracao_balcao=json.loads(config_json),
+        pipeline_secoes=json.loads(pipeline_json),
+        modulos=json.loads(modulos_json) if modulos_json else [],
+    )
+
+
 def deletar_layout(conn: sqlite3.Connection, layout_id: int) -> None:
     """Remove uma opção e renumera as demais sequencialmente (1..N)."""
     layout = repo.obter_layout(conn, layout_id)

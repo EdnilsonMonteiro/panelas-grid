@@ -154,6 +154,26 @@ def obter_layout(conn: sqlite3.Connection, layout_id: int) -> Optional[Dict[str,
     return dict(linha) if linha else None
 
 
+def atualizar_layout(
+    conn: sqlite3.Connection,
+    layout_id: int,
+    titulo: str,
+    configuracao_balcao_json: str,
+    pipeline_secoes_json: str,
+    modulos_json: Optional[str] = None,
+) -> None:
+    """Atualiza o conteúdo de um layout (opção) existente."""
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE layouts_pedido
+        SET titulo = ?, configuracao_balcao = ?, pipeline_secoes = ?, modulos_json = ?
+        WHERE id = ?
+        """,
+        (titulo, configuracao_balcao_json, pipeline_secoes_json, modulos_json, layout_id),
+    )
+
+
 def deletar_layout(conn: sqlite3.Connection, layout_id: int) -> None:
     """Remove um layout pelo id."""
     cursor = conn.cursor()

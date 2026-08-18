@@ -152,6 +152,21 @@ def deletar_layout(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+@router.put("/layouts/{layout_id}", response_model=LayoutPedidoResposta)
+def atualizar_layout(
+    layout_id: int,
+    dados: LayoutPedidoEntrada,
+    conn: sqlite3.Connection = Depends(get_db),
+) -> LayoutPedidoResposta:
+    """Atualiza o conteúdo de uma opção existente (edição)."""
+    try:
+        return pedido_service.atualizar_layout(conn, layout_id, dados)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
 @router.get("/{pedido_id}/exportar/pdf")
 def exportar_pdf(
     pedido_id: int, conn: sqlite3.Connection = Depends(get_db)
