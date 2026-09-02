@@ -184,10 +184,12 @@ def exportar_pdf(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro na exportação: {e}") from e
 
+    nome_base = pedido.nome_cliente or pedido.nome_pedido
+
     return FileResponse(
         caminho_pdf,
         media_type="application/pdf",
-        filename=f"layout_{pipeline_service.normalizar_slug_cliente(pedido.nome_pedido)}_opcoes.pdf",
+        filename=f"layout_{pipeline_service.normalizar_slug_cliente(nome_base)}_opcoes.pdf",
         content_disposition_type="inline",
     )
 
@@ -209,10 +211,12 @@ def exportar_pptx(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro na exportação: {e}") from e
 
+    nome_base = pedido.nome_cliente or pedido.nome_pedido
+
     return FileResponse(
         caminho_pptx,
         media_type=MIMETYPE_PPTX,
-        filename=f"layout_{pipeline_service.normalizar_slug_cliente(pedido.nome_pedido)}_opcoes.pptx",
+        filename=f"layout_{pipeline_service.normalizar_slug_cliente(nome_base)}_opcoes.pptx",
     )
 
 
@@ -233,8 +237,10 @@ def exportar_proposta(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro na exportação: {e}") from e
 
+    nome_base = pedido.nome_cliente or pedido.nome_pedido
+
     return FileResponse(
         caminho_pdf,
         media_type="application/pdf",
-        filename=f"layout_{pipeline_service.normalizar_slug_cliente(pedido.nome_pedido)}_proposta.pdf",
+        filename=f"layout_{pipeline_service.normalizar_slug_cliente(nome_base)}_proposta.pdf",
     )

@@ -277,3 +277,158 @@ class LayoutEngine:
         self.otimizar_gaps_da_secao(
             total_antes, x_min, x_max, y_min=y_limite_inf, y_max=y_limite_sup
         )
+
+    def alocar_sequencia_fixa(
+        self,
+        itens_ordenados,
+        x_min,
+        x_max,
+        nome_secao,
+        y_limite_inf=0.0,
+    ):
+        """Preenche a seção repetindo verticalmente o padrão de coluna.
+
+        As travessas são empilhadas DE CIMA para BAIXO (a primeira da ordem
+        fica no topo), formando uma coluna única que é repetida
+        horizontalmente enquanto houver largura disponível na janela da
+        seção. Ao final aplica a mesma distribuição homogênea de gaps das
+        demais seções, preservando a ordem escolhida.
+
+        Se o padrão não couber — altura da coluna maior que a profundidade
+        do balcão ou travessa mais larga que a janela — nada é alocado e um
+        ValueError explicativo é lançado (a UI exibe a mensagem).
+        """
+        print(
+            f"--- Iniciando preenchimento com ordem fixa (colunas): {nome_secao} ---"
+        )
+
+        def fmt(valor):
+            return f"{float(valor):g}"
+
+        erros = []
+        travessas = []
+
+        for indice, item in enumerate(itens_ordenados, start=1):
+            if not isinstance(item, dict) or not item.get("nome"):
+                erros.append(
+                    f"A seção '{nome_secao}' tem um item inválido na posição"
+                    f" {indice} da ordem de preenchimento."
+                )
+                continue
+
+            nome = str(item["nome"])
+            rotacionar = bool(item.get("rot", False))
+            try:
+                w_original = float(item.get("w") or 0.0)
+                h_original = float(item.get("h") or 0.0)
+            except (TypeError, ValueError):
+                w_original = h_original = 0.0
+
+            if w_original <= 0 or h_original <= 0:
+                erros.append(
+                    f"A travessa '{nome}' (posição {indice}) está sem"
+                    f" dimensões válidas."
+                )
+                continue
+
+            # A rotação troca largura x altura (mesma regra do motor guloso)
+            w_efetivo, h_efetivo = (
+                (h_original, w_original)
+                if rotacionar
+                else (w_original, h_original)
+            )
+
+            travessas.append({"nome": nome, "w": w_efetivo, "h": h_efetivo})
+
+        if not travessas:
+            if erros:
+                raise ValueError(
+                    "Não foi possível montar o preenchimento fixo. "
+                    + " ".join(erros)
+                )
+            raise ValueError(
+                f"A seção '{nome_secao}' não tem travessas válidas na ordem"
+                f" de preenchimento."
+            )
+
+        # Altura do padrão de coluna (empilhado de cima para baixo)
+        altura_coluna = round(
+            sum(t["h"] for t in travessas)
+            + self.espaco * (len(travessas) - 1),
+            2,
+        )
+        if round(y_limite_inf + altura_coluna, 2) > round(self.P, 2):
+            erros.append(
+                f"O padrão de coluna da seção '{nome_secao}' soma"
+                f" {fmt(altura_coluna)} cm de altura (incluindo o"
+                f" espaçamento de {fmt(self.espaco)} cm entre as travessas),"
+                f" mas a profundidade do balcão é de apenas {fmt(self.P)} cm."
+                f" Remova travessas da sequência ou rotacione as mais altas."
+            )
+
+        # Largura: a coluna tem a largura da travessa mais larga do padrão
+        largura_coluna = round(max(t["w"] for t in travessas), 2)
+        largura_disponivel = round(min(x_max, self.L) - x_min, 2)
+        if largura_coluna > largura_disponivel:
+            erros.append(
+                f"A travessa mais larga do padrão da seção '{nome_secao}'"
+                f" tem {fmt(largura_coluna)} cm de largura, mas a largura"
+                f" disponível para esta seção no balcão é de apenas"
+                f" {fmt(largura_disponivel)} cm (balcão com {fmt(self.L)} cm"
+                f" de comprimento). Rotacione travessas, troque por travessas"
+                f" mais estreitas ou aumente o '% do Espaço Restante' da"
+                f" seção."
+            )
+        qtd_colunas = max(
+            1,
+            int(
+                (largura_disponivel + self.espaco)
+                // (largura_coluna + self.espaco)
+            ),
+        )
+
+        if erros:
+            raise ValueError(
+                "Não foi possível montar o preenchimento fixo. "
+                + " ".join(erros)
+            )
+
+        # Monta as colunas repetindo o padrão. O eixo Y do motor é desenhado
+        # invertido (y=0 é o topo visual no PDF/PPTX), então a primeira
+        # travessa da ordem fica em y_limite_inf — o TOPO visual — e as
+        # seguintes empilham para baixo na visualização.
+        total_antes = len(self.itens)
+        for coluna in range(qtd_colunas):
+            x_coluna = round(
+                x_min + coluna * (largura_coluna + self.espaco), 2
+            )
+            y_cursor = round(y_limite_inf, 2)
+            for travessa in travessas:
+                y_item = y_cursor
+                if not self.cabe(
+                    x_coluna, y_item, travessa["w"], travessa["h"]
+                ):
+                    raise ValueError(
+                        f"A travessa '{travessa['nome']}' da seção"
+                        f" '{nome_secao}' não pôde ser posicionada (x="
+                        f"{fmt(x_coluna)}, y={fmt(y_item)}) por sobreposição"
+                        f" com outros itens do balcão."
+                    )
+                self.itens.append(
+                    {
+                        "nome": travessa["nome"],
+                        "x": x_coluna,
+                        "y": y_item,
+                        "w": travessa["w"],
+                        "h": travessa["h"],
+                        "formato": "retangulo",
+                    }
+                )
+                y_cursor = round(y_cursor + travessa["h"] + self.espaco, 2)
+
+        # Mesmo acabamento das demais seções: distribuição homogênea dos
+        # gaps em X (entre colunas) e em Y (dentro de cada coluna),
+        # preservando a ordem de cima para baixo e das colunas.
+        self.otimizar_gaps_da_secao(
+            total_antes, x_min, x_max, y_min=y_limite_inf, y_max=None
+        )

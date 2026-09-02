@@ -223,7 +223,7 @@ class SecaoPanelasRedondasComGaps(Secao):
 
     UI_SCHEMA = {
         "tipo": "SecaoPanelasRedondasComGaps",
-        "nome_amigavel": "Panelas Redondas + Gaps Dinâmicos",
+        "nome_amigavel": "Panelas Redondas",
         "descricao": "Aloca panelas baseadas em catálogo e preenche o espaço inferior com cubas.",
         "campos": [
             {
@@ -541,17 +541,29 @@ class SecaoPanelasRedondasComGaps(Secao):
 
 
 class SecaoItensFixos(Secao):
-    """Encapsula o preenchimento de itens específicos/saladas"""
+    """Preenchimento fixo: travessas escolhidas pelo usuário na ordem definida.
+
+    A UI envia `ordem_travessas` — a sequência exata de instâncias (com
+    rotação individual) que forma uma coluna única, empilhada de cima para
+    baixo e repetida horizontalmente enquanto houver largura. Opções/templates
+    antigos (sem `ordem_travessas`) continuam funcionando pelo preenchimento
+    guloso original.
+    """
 
     UI_SCHEMA = {
         "tipo": "SecaoItensFixos",
-        "nome_amigavel": "Itens Fixos / Saladas",
-        "descricao": "Aloca uma lista predefinida de itens específicos (como saladas ou travessas dedicadas) sem otimização combinatória.",
+        "nome_amigavel": "Travessas Personalizadas",
+        "descricao": "Selecione as travessas e monte a ordem dentro do catálogo: a sequência empilha de cima para baixo e repete em colunas enquanto houver largura.",
         "campos": [
             {
                 "nome": "catalogo_especifico",
                 "tipo": "catalogo",
-                "label": "Catálogo de Itens Fixos",
+                "label": "Catálogo de travessas",
+            },
+            {
+                "nome": "ordem_travessas",
+                "tipo": "ordem_travessas",
+                "label": "Ordem de preenchimento",
             },
             {
                 "nome": "pct_largura_alvo",
@@ -562,12 +574,33 @@ class SecaoItensFixos(Secao):
         ],
     }
 
-    def __init__(self, nome, catalogo_especifico=None, pct_largura_alvo=1.0, **kwargs):
+    def __init__(
+        self,
+        nome,
+        catalogo_especifico=None,
+        ordem_travessas=None,
+        pct_largura_alvo=1.0,
+        **kwargs,
+    ):
         self.catalogo_especifico = catalogo_especifico
+        self.ordem_travessas = (
+            ordem_travessas if isinstance(ordem_travessas, list) else []
+        )
 
         super().__init__(nome=nome, pct_largura_alvo=pct_largura_alvo)
 
     def executar_alocacao(self, modulo, x_min, x_max, catalogo):
+        if self.ordem_travessas:
+            modulo.engine.alocar_sequencia_fixa(
+                self.ordem_travessas,
+                x_min=x_min,
+                x_max=x_max,
+                nome_secao=self.nome,
+            )
+            return
+
+        # Compatibilidade: layouts antigos só guardam o catálogo escolhido —
+        # mantém o preenchimento guloso original (repete até preencher).
         cat_para_usar = (
             self.catalogo_especifico if self.catalogo_especifico else catalogo
         )
