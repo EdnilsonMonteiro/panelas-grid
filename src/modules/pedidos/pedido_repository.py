@@ -88,8 +88,8 @@ def listar_layouts(conn: sqlite3.Connection, pedido_id: int) -> List[Dict[str, A
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT id, opcao_numero, titulo, configuracao_balcao, pipeline_secoes,
-               modulos_json
+        SELECT id, opcao_numero, titulo, categoria, configuracao_balcao,
+               pipeline_secoes, modulos_json
         FROM layouts_pedido
         WHERE pedido_id = ?
         ORDER BY opcao_numero ASC, id ASC
@@ -97,6 +97,20 @@ def listar_layouts(conn: sqlite3.Connection, pedido_id: int) -> List[Dict[str, A
         (pedido_id,),
     )
     return [dict(linha) for linha in cursor.fetchall()]
+
+
+def listar_categorias(conn: sqlite3.Connection, pedido_id: int) -> List[str]:
+    """Retorna as categorias (grupos de exportação) já usadas no pedido."""
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT DISTINCT categoria FROM layouts_pedido
+        WHERE pedido_id = ? AND categoria != ''
+        ORDER BY categoria ASC
+        """,
+        (pedido_id,),
+    )
+    return [linha["categoria"] for linha in cursor.fetchall()]
 
 
 def proximo_numero_opcao(conn: sqlite3.Connection, pedido_id: int) -> int:
@@ -117,6 +131,7 @@ def inserir_layout(
     configuracao_balcao_json: str,
     pipeline_secoes_json: str,
     modulos_json: Optional[str] = None,
+    categoria: str = "",
 ) -> int:
     """Insere um novo layout no pedido e devolve o id gerado."""
     cursor = conn.cursor()
@@ -124,8 +139,8 @@ def inserir_layout(
         """
         INSERT INTO layouts_pedido
             (pedido_id, opcao_numero, titulo, configuracao_balcao,
-             pipeline_secoes, modulos_json)
-        VALUES (?, ?, ?, ?, ?, ?)
+             pipeline_secoes, modulos_json, categoria)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         (
             pedido_id,
@@ -134,6 +149,7 @@ def inserir_layout(
             configuracao_balcao_json,
             pipeline_secoes_json,
             modulos_json,
+            categoria,
         ),
     )
     return int(cursor.lastrowid)
@@ -144,7 +160,7 @@ def obter_layout(conn: sqlite3.Connection, layout_id: int) -> Optional[Dict[str,
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT id, pedido_id, opcao_numero, titulo, configuracao_balcao,
+        SELECT id, pedido_id, opcao_numero, titulo, categoria, configuracao_balcao,
                pipeline_secoes, modulos_json
         FROM layouts_pedido WHERE id = ?
         """,
@@ -154,6 +170,24 @@ def obter_layout(conn: sqlite3.Connection, layout_id: int) -> Optional[Dict[str,
     return dict(linha) if linha else None
 
 
+def atualizar_categoria(conn: sqlite3.Connection, layout_id: int, categoria: str) -> None:
+    """Atualiza a categoria (grupo de exportação) de uma opção.
+
+    A categoria é a fonte lógica do nome: quando não vazia, o `titulo`
+    (texto exibido no PDF/PPTX) é espelhado para o mesmo valor.
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE layouts_pedido
+        SET categoria = ?,
+            titulo = CASE WHEN ? != '' THEN ? ELSE titulo END
+        WHERE id = ?
+        """,
+        (categoria, categoria, categoria, layout_id),
+    )
+
+
 def atualizar_layout(
     conn: sqlite3.Connection,
     layout_id: int,
@@ -161,17 +195,39 @@ def atualizar_layout(
     configuracao_balcao_json: str,
     pipeline_secoes_json: str,
     modulos_json: Optional[str] = None,
+    categoria: Optional[str] = None,
 ) -> None:
-    """Atualiza o conteúdo de um layout (opção) existente."""
+    """Atualiza o conteúdo de um layout (opção) existente.
+
+    `categoria` é opcional: quando None, mantém a categoria atual.
+    """
     cursor = conn.cursor()
-    cursor.execute(
-        """
-        UPDATE layouts_pedido
-        SET titulo = ?, configuracao_balcao = ?, pipeline_secoes = ?, modulos_json = ?
-        WHERE id = ?
-        """,
-        (titulo, configuracao_balcao_json, pipeline_secoes_json, modulos_json, layout_id),
-    )
+    if categoria is None:
+        cursor.execute(
+            """
+            UPDATE layouts_pedido
+            SET titulo = ?, configuracao_balcao = ?, pipeline_secoes = ?, modulos_json = ?
+            WHERE id = ?
+            """,
+            (titulo, configuracao_balcao_json, pipeline_secoes_json, modulos_json, layout_id),
+        )
+    else:
+        cursor.execute(
+            """
+            UPDATE layouts_pedido
+            SET titulo = ?, configuracao_balcao = ?, pipeline_secoes = ?, modulos_json = ?,
+                categoria = ?
+            WHERE id = ?
+            """,
+            (
+                titulo,
+                configuracao_balcao_json,
+                pipeline_secoes_json,
+                modulos_json,
+                categoria,
+                layout_id,
+            ),
+        )
 
 
 def deletar_layout(conn: sqlite3.Connection, layout_id: int) -> None:

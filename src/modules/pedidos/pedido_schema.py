@@ -35,6 +35,10 @@ class LayoutPedidoEntrada(BaseModel):
     """Payload de gravação de uma nova opção (layout) no pedido."""
 
     titulo: str = Field(default="Self-Service Quente")
+    categoria: str = Field(
+        default="",
+        description="Grupo de exportação da opção (ex.: Balcão Quente / Balcão Frio)",
+    )
     configuracao_balcao: ConfiguracaoBalcao
     pipeline_secoes: List[SecaoPipeline] = Field(min_length=1)
     modulos: List[ModuloConfig] = Field(
@@ -48,6 +52,7 @@ class LayoutPedidoResposta(BaseModel):
     id: str
     opcao_numero: int
     titulo: str
+    categoria: str = ""
     configuracao_balcao: Dict[str, Any]
     pipeline_secoes: List[Dict[str, Any]]
     modulos: List[Dict[str, Any]] = Field(default_factory=list)
@@ -75,6 +80,12 @@ class ReordenarLayoutsEntrada(BaseModel):
     """Payload de reordenação das opções (ordem final desejada)."""
 
     ordered_layout_ids: List[int] = Field(min_length=1)
+
+
+class CategoriaLayoutEntrada(BaseModel):
+    """Payload de atualização da categoria (grupo de exportação) de uma opção."""
+
+    categoria: str = Field(default="", description="Nome do grupo (vazio = sem grupo)")
 
 
 class PedidoAtualizarEntrada(BaseModel):

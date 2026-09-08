@@ -7,6 +7,7 @@ from core.dependencies import get_db
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from modules.pedidos.pedido_schema import (
+    CategoriaLayoutEntrada,
     LayoutPedidoEntrada,
     LayoutPedidoResposta,
     PedidoAtualizarEntrada,
@@ -138,6 +139,37 @@ def reordenar_layouts(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+@router.get("/{pedido_id}/categorias", response_model=List[str])
+def listar_categorias(
+    pedido_id: int, conn: sqlite3.Connection = Depends(get_db)
+) -> List[str]:
+    """Retorna as categorias (grupos de exportação) já usadas nas opções do pedido."""
+    try:
+        if pedido_service.obter_pedido(conn, pedido_id) is None:
+            raise HTTPException(status_code=404, detail="Pedido não encontrado.")
+        return pedido_service.listar_categorias(conn, pedido_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.put("/layouts/{layout_id}/categoria", response_model=MensagemResponse)
+def atualizar_categoria_layout(
+    layout_id: int,
+    dados: CategoriaLayoutEntrada,
+    conn: sqlite3.Connection = Depends(get_db),
+) -> MensagemResponse:
+    """Define a categoria (grupo de exportação) de uma opção."""
+    try:
+        pedido_service.atualizar_categoria_layout(conn, layout_id, dados.categoria)
+        return MensagemResponse(mensagem="Categoria da opção atualizada!")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
 @router.delete("/layouts/{layout_id}", response_model=MensagemResponse)
 def deletar_layout(
     layout_id: int, conn: sqlite3.Connection = Depends(get_db)
@@ -169,14 +201,19 @@ def atualizar_layout(
 
 @router.get("/{pedido_id}/exportar/pdf")
 def exportar_pdf(
-    pedido_id: int, conn: sqlite3.Connection = Depends(get_db)
+    pedido_id: int,
+    categoria: Optional[str] = Query(default=None),
+    conn: sqlite3.Connection = Depends(get_db),
 ) -> FileResponse:
-    """Gera o PDF com uma página por opção salva do pedido."""
+    """Gera o PDF com uma página por opção salva (do grupo informado) do pedido.
+
+    `?categoria=Balcão Quente` exporta somente as opções daquele grupo.
+    """
     try:
         pedido = pedido_service.obter_pedido(conn, pedido_id)
         if pedido is None:
             raise HTTPException(status_code=404, detail="Pedido não encontrado.")
-        caminho_pdf = pedido_service.exportar_pdf(conn, pedido_id)
+        caminho_pdf = pedido_service.exportar_pdf(conn, pedido_id, categoria=categoria)
     except HTTPException:
         raise
     except ValueError as e:
@@ -196,14 +233,16 @@ def exportar_pdf(
 
 @router.get("/{pedido_id}/exportar/pptx")
 def exportar_pptx(
-    pedido_id: int, conn: sqlite3.Connection = Depends(get_db)
+    pedido_id: int,
+    categoria: Optional[str] = Query(default=None),
+    conn: sqlite3.Connection = Depends(get_db),
 ) -> FileResponse:
-    """Gera o PPTX com um slide por opção salva do pedido."""
+    """Gera o PPTX com um slide por opção salva (do grupo informado) do pedido."""
     try:
         pedido = pedido_service.obter_pedido(conn, pedido_id)
         if pedido is None:
             raise HTTPException(status_code=404, detail="Pedido não encontrado.")
-        caminho_pptx = pedido_service.exportar_pptx(conn, pedido_id)
+        caminho_pptx = pedido_service.exportar_pptx(conn, pedido_id, categoria=categoria)
     except HTTPException:
         raise
     except ValueError as e:
@@ -222,14 +261,16 @@ def exportar_pptx(
 
 @router.get("/{pedido_id}/exportar/proposta")
 def exportar_proposta(
-    pedido_id: int, conn: sqlite3.Connection = Depends(get_db)
+    pedido_id: int,
+    categoria: Optional[str] = Query(default=None),
+    conn: sqlite3.Connection = Depends(get_db),
 ) -> FileResponse:
-    """Gera o PDF da Proposta Comercial (página única com render 3D e pistas)."""
+    """Gera o PDF da Proposta Comercial (página única, do grupo informado)."""
     try:
         pedido = pedido_service.obter_pedido(conn, pedido_id)
         if pedido is None:
             raise HTTPException(status_code=404, detail="Pedido não encontrado.")
-        caminho_pdf = pedido_service.exportar_proposta(conn, pedido_id)
+        caminho_pdf = pedido_service.exportar_proposta(conn, pedido_id, categoria=categoria)
     except HTTPException:
         raise
     except ValueError as e:

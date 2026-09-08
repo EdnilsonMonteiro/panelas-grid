@@ -73,6 +73,13 @@ def inicializar_banco():
             "ALTER TABLE layouts_pedido ADD COLUMN modulos_json TEXT"
         )
 
+    # Migração: categoria (grupo de exportação) de cada opção — permite
+    # exportar PDF/PPTX/Proposta isolados (ex.: "Balcão Quente" / "Balcão Frio")
+    if "categoria" not in colunas:
+        cursor.execute(
+            "ALTER TABLE layouts_pedido ADD COLUMN categoria TEXT NOT NULL DEFAULT ''"
+        )
+
     conn.commit()
     conn.close()
     print(" > Banco de dados SQLite inicializado e verificado com sucesso.")
